@@ -3,7 +3,7 @@ render_mode cull_disabled, world_vertex_coords;
 // Alien grass: dark roots fading to glowing tips. Sways in the wind and bends away from the player.
 // Each MultiMesh instance stores its tip colour in INSTANCE_CUSTOM.rgb and a random phase in .a.
 
-uniform vec3 root_color : source_color = vec3(0.02, 0.05, 0.07);
+uniform vec3 root_color : source_color = vec3(0.02, 0.04, 0.08);
 uniform float tip_glow = 1.4;
 uniform float wind_strength = 0.16;
 uniform float wind_speed = 1.3;
