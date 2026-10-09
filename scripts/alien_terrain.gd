@@ -1,0 +1,837 @@
+@tool
+class_name AlienTerrain
+extends Node3D
+## Builds the alien world around the arena from code: rolling ground with glowing veins,
+## swaying grass, alien trees, shrubs, rocks, crystals and drifting spores.
+## Everything is decoration with no collision, so the arena's floor and walls still do all the
+## gameplay work. Change world_seed for a different layout.
+
+const GROUND_SHADER := preload("res://shaders/alien_ground.gdshader")
+const GRASS_SHADER := preload("res://shaders/alien_grass.gdshader")
+const FLORA_SHADER := preload("res://shaders/alien_flora.gdshader")
+
+@export var world_seed := 7: set = _set_world_seed
+## Half the width of the flat, playable square in the middle (matches the arena walls).
+@export var arena_half_size := 20.0
+@export var world_size := 300.0
+@export var grass_clumps := 14000
+@export var grass_radius := 58.0
+@export var tree_count := 90
+@export var shrub_count := 260
+@export var spore_count := 500
+## Tick to rebuild in the editor after changing settings.
+@export var rebuild := false: set = _set_rebuild
+
+var _rng := RandomNumberGenerator.new()
+var _hills := FastNoiseLite.new()
+var _ridges := FastNoiseLite.new()
+var _patches := FastNoiseLite.new()
+var _generated: Node3D
+var _grass_material: ShaderMaterial
+var _player: Node3D
+
+var _flora_material: ShaderMaterial
+var _rock_material: ShaderMaterial
+
+
+func _ready() -> void:
+	_build()
+
+
+func _process(_delta: float) -> void:
+	if Engine.is_editor_hint() or _grass_material == null:
+		return
+	if not is_instance_valid(_player):
+		_player = get_tree().get_first_node_in_group("player") as Node3D
+	if _player:
+		_grass_material.set_shader_parameter("player_position", _player.global_position)
+
+
+func _set_world_seed(value: int) -> void:
+	world_seed = value
+	if is_inside_tree():
+		_build()
+
+
+func _set_rebuild(_value: bool) -> void:
+	if is_inside_tree():
+		_build()
+
+
+## Ground height at a world position. Zero across the arena, rising into hills and far mountains.
+func height_at(x: float, z: float) -> float:
+	var outside := Vector2(maxf(absf(x) - arena_half_size, 0.0), maxf(absf(z) - arena_half_size, 0.0)).length()
+	var hill_blend := smoothstep(3.0, 26.0, outside)
+	var hills := (_hills.get_noise_2d(x, z) * 0.5 + 0.5) * 11.0 + 1.5
+	var r := Vector2(x, z).length()
+	var ridge := 1.0 - absf(_ridges.get_noise_2d(x, z))
+	var mountains := smoothstep(75.0, 140.0, r) * (ridge * ridge * 45.0 + 8.0)
+	return hills * hill_blend + mountains
+
+
+func _build() -> void:
+	if _generated:
+		_generated.free()
+	_generated = Node3D.new()
+	_generated.name = "Generated"
+	add_child(_generated)
+
+	_rng.seed = world_seed
+	_hills.seed = world_seed
+	_hills.frequency = 0.018
+	_hills.fractal_octaves = 4
+	_ridges.seed = world_seed + 1
+	_ridges.frequency = 0.011
+	_ridges.fractal_octaves = 3
+	_patches.seed = world_seed + 2
+	_patches.frequency = 0.035
+
+	_flora_material = ShaderMaterial.new()
+	_flora_material.shader = FLORA_SHADER
+	_rock_material = ShaderMaterial.new()
+	_rock_material.shader = FLORA_SHADER
+	_rock_material.set_shader_parameter("sway", 0.0)
+	_rock_material.set_shader_parameter("roughness_value", 0.9)
+	_rock_material.set_shader_parameter("glow_strength", 1.8)
+	_rock_material.set_shader_parameter("rim_strength", 0.5)
+
+	_build_ground()
+	_build_grass()
+	_build_rocks_and_crystals()
+	_build_trees()
+	_build_shrubs()
+	_build_spores()
+
+
+# --- Ground -------------------------------------------------------------------------------------
+
+func _build_ground() -> void:
+	var step := 2.0
+	var count := int(world_size / step) + 1
+	var half := world_size * 0.5
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var indices := PackedInt32Array()
+	for iz in count:
+		for ix in count:
+			var x := -half + ix * step
+			var z := -half + iz * step
+			verts.append(Vector3(x, height_at(x, z), z))
+			normals.append(_normal_at(x, z))
+	for iz in count - 1:
+		for ix in count - 1:
+			var i := iz * count + ix
+			indices.append_array([i, i + 1, i + count, i + 1, i + count + 1, i + count])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var material := ShaderMaterial.new()
+	material.shader = GROUND_SHADER
+	mesh.surface_set_material(0, material)
+
+	var ground := MeshInstance3D.new()
+	ground.name = "Ground"
+	ground.mesh = mesh
+	_generated.add_child(ground)
+
+
+func _normal_at(x: float, z: float) -> Vector3:
+	var e := 0.5
+	var dx := height_at(x + e, z) - height_at(x - e, z)
+	var dz := height_at(x, z + e) - height_at(x, z - e)
+	return Vector3(-dx, 2.0 * e, -dz).normalized()
+
+
+# --- Grass --------------------------------------------------------------------------------------
+
+func _build_grass() -> void:
+	_grass_material = ShaderMaterial.new()
+	_grass_material.shader = GRASS_SHADER
+	var blade_mesh := _make_grass_clump_mesh()
+	blade_mesh.surface_set_material(0, _grass_material)
+
+	# Split the field into chunks so off-screen and distant grass is culled.
+	var chunk_size := 20.0
+	var chunks := {}
+	var tips := [
+		Color(0.15, 0.85, 0.95), Color(0.55, 0.3, 1.0), Color(0.95, 0.3, 0.75), Color(0.3, 0.6, 1.0),
+	]
+	var placed := 0
+	var attempts := 0
+	while placed < grass_clumps and attempts < grass_clumps * 4:
+		attempts += 1
+		var x := _rng.randf_range(-grass_radius, grass_radius)
+		var z := _rng.randf_range(-grass_radius, grass_radius)
+		var r := Vector2(x, z).length()
+		if r > grass_radius or _rng.randf() < r / grass_radius * 0.5:
+			continue
+		var patch := _patches.get_noise_2d(x, z)
+		if patch < -0.45:
+			continue  # bare patches break up the carpet
+		if _normal_at(x, z).y < 0.8:
+			continue
+		var in_arena := absf(x) < arena_half_size and absf(z) < arena_half_size
+		var tall := _rng.randf_range(0.2, 0.38) if in_arena else _rng.randf_range(0.4, 0.95)
+		var wide := _rng.randf_range(0.8, 1.3)
+		var basis := Basis(Vector3.UP, _rng.randf() * TAU).scaled(Vector3(wide, tall, wide))
+		var xform := Transform3D(basis, Vector3(x, height_at(x, z) - 0.02, z))
+		var tip_index := clampi(int((patch * 0.5 + 0.5) * tips.size() + _rng.randf_range(-0.6, 0.6)), 0, tips.size() - 1)
+		var tip: Color = tips[tip_index].lerp(Color(0.2, 0.9, 0.8), _rng.randf() * 0.2)
+		tip.a = _rng.randf()
+		var key := Vector2i(floori(x / chunk_size), floori(z / chunk_size))
+		if not chunks.has(key):
+			chunks[key] = []
+		chunks[key].append([xform, tip])
+		placed += 1
+
+	for key: Vector2i in chunks:
+		var items: Array = chunks[key]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_custom_data = true
+		mm.mesh = blade_mesh
+		mm.instance_count = items.size()
+		for i in items.size():
+			mm.set_instance_transform(i, items[i][0])
+			mm.set_instance_custom_data(i, items[i][1])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.name = "Grass_%d_%d" % [key.x, key.y]
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.visibility_range_end = 85.0
+		mmi.visibility_range_end_margin = 10.0
+		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		_generated.add_child(mmi)
+
+
+## A clump of six curved, tapering blades, one unit tall. UV.y runs from root (0) to tip (1).
+func _make_grass_clump_mesh() -> ArrayMesh:
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	var segments := 4
+	var blades := 6
+	for blade in blades:
+		var angle := blade * TAU / blades + _rng.randf_range(-0.4, 0.4)
+		var offset := Vector3(cos(angle * 1.7), 0.0, sin(angle * 1.7)) * _rng.randf_range(0.02, 0.12)
+		var lean_dir := Vector3(cos(angle), 0.0, sin(angle))
+		var side := lean_dir.cross(Vector3.UP).normalized()
+		var lean := _rng.randf_range(0.15, 0.4)
+		var width := _rng.randf_range(0.025, 0.045)
+		var start := verts.size()
+		for s in segments + 1:
+			var t := float(s) / segments
+			var center := offset + lean_dir * lean * t * t + Vector3.UP * t
+			var w := width * (1.0 - t)
+			verts.append(center - side * w)
+			verts.append(center + side * w)
+			for k in 2:
+				normals.append(Vector3.UP)
+				uvs.append(Vector2(k, t))
+		for s in segments:
+			var i := start + s * 2
+			indices.append_array([i, i + 1, i + 2, i + 1, i + 3, i + 2])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+# --- Trees --------------------------------------------------------------------------------------
+
+func _build_trees() -> void:
+	var variants: Array[ArrayMesh] = []
+	for i in 3:
+		variants.append(_make_lantern_tree())
+		variants.append(_make_parasol_tree())
+		variants.append(_make_coral_tree())
+
+	var spots: Array[Vector2] = []
+	var attempts := 0
+	while spots.size() < tree_count and attempts < tree_count * 30:
+		attempts += 1
+		var angle := _rng.randf() * TAU
+		var r := arena_half_size * 1.45 + pow(_rng.randf(), 1.3) * 80.0
+		var p := Vector2(cos(angle), sin(angle)) * r
+		if maxf(absf(p.x), absf(p.y)) < arena_half_size + 6.0:
+			continue
+		var clear := true
+		for other in spots:
+			if other.distance_to(p) < 6.0:
+				clear = false
+				break
+		if clear:
+			spots.append(p)
+
+	for p in spots:
+		var tree := MeshInstance3D.new()
+		tree.mesh = variants[_rng.randi() % variants.size()]
+		tree.material_override = _flora_material
+		var s := _rng.randf_range(0.8, 1.35)
+		tree.transform = Transform3D(Basis(Vector3.UP, _rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(p.x, height_at(p.x, p.y) - 0.3, p.y))
+		tree.visibility_range_end = 160.0
+		_generated.add_child(tree)
+
+
+## Curving trunk with glowing spiral veins and drooping branches that end in lantern bulbs.
+func _make_lantern_tree() -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var h := _rng.randf_range(6.0, 10.0)
+	var bark := Color(0.2, 0.12, 0.27)
+	var vein: Color = _pick([Color(0.2, 0.95, 1.0), Color(0.75, 0.4, 1.0)])
+	var bulb: Color = _pick([Color(0.3, 1.0, 0.95), Color(1.0, 0.45, 0.8), Color(0.75, 1.0, 0.4)])
+	var phase := _rng.randf() * TAU
+	var bend := _rng.randf_range(0.6, 1.4)
+	var trunk: Array[Vector3] = []
+	var radii: Array[float] = []
+	for i in 12:
+		var t := i / 11.0
+		trunk.append(Vector3(sin(t * 2.2 + phase) * bend * t, h * t, cos(t * 1.7 + phase) * bend * 0.6 * t))
+		radii.append(lerpf(0.42, 0.12, t) * (1.0 + 1.4 * pow(1.0 - t, 5.0)))
+	mb.tube(trunk, radii, 10, bark, bark.lightened(0.15), vein, 3.0)
+
+	var branches := _rng.randi_range(4, 6)
+	for b in branches:
+		var t0 := _rng.randf_range(0.5, 0.92)
+		var start := _sample_path(trunk, t0)
+		var dir := Vector3.FORWARD.rotated(Vector3.UP, b * TAU / branches + _rng.randf_range(-0.4, 0.4))
+		var length := _rng.randf_range(1.8, 3.4)
+		var path: Array[Vector3] = []
+		var path_radii: Array[float] = []
+		for i in 8:
+			var s := i / 7.0
+			path.append(start + dir * length * s + Vector3.UP * (sin(s * PI * 0.8) * 1.3 - s * s * 1.1))
+			path_radii.append(lerpf(0.12, 0.04, s))
+		mb.tube(path, path_radii, 6, bark, bark.lightened(0.2), vein, 2.0)
+		var tip := path[path.size() - 1]
+		var size := _rng.randf_range(0.3, 0.55)
+		mb.ellipsoid(tip + Vector3.DOWN * size * 0.8, Vector3(size, size * 1.25, size), bulb, bulb, 1.0)
+		# A few smaller bulbs dangle from each branch on thin threads.
+		for k in _rng.randi_range(1, 3):
+			var hang := _sample_path(path, _rng.randf_range(0.3, 0.85))
+			var drop := _rng.randf_range(0.4, 1.2)
+			mb.tube([hang, hang + Vector3.DOWN * drop] as Array[Vector3], [0.015, 0.015] as Array[float], 4, bark, bark, vein, 0.0)
+			mb.ellipsoid(hang + Vector3.DOWN * (drop + 0.1), Vector3.ONE * _rng.randf_range(0.1, 0.18), bulb, bulb, 1.0)
+	var top := trunk[trunk.size() - 1]
+	mb.ellipsoid(top + Vector3.UP * 0.3, Vector3(0.6, 0.8, 0.6), bulb, bulb, 1.0)
+	return mb.commit()
+
+
+## Slender twisting stalk under a wide mushroom cap with glowing gills and hanging tendrils.
+func _make_parasol_tree() -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var h := _rng.randf_range(7.0, 12.0)
+	var stalk := Color(0.55, 0.5, 0.62)
+	var cap_top: Color = _pick([Color(0.3, 0.13, 0.42), Color(0.1, 0.25, 0.33), Color(0.42, 0.12, 0.25)])
+	var gills: Color = _pick([Color(1.0, 0.35, 0.75), Color(0.35, 0.9, 1.0), Color(0.7, 0.45, 1.0)])
+	var phase := _rng.randf() * TAU
+	var trunk: Array[Vector3] = []
+	var radii: Array[float] = []
+	for i in 12:
+		var t := i / 11.0
+		trunk.append(Vector3(sin(t * 3.0 + phase) * 0.5 * t, h * t, cos(t * 2.5 + phase) * 0.4 * t))
+		radii.append(lerpf(0.38, 0.22, t) * (1.0 + 1.0 * pow(1.0 - t, 6.0)))
+	mb.tube(trunk, radii, 10, stalk.darkened(0.45), stalk, gills, 0.0)
+
+	var top := trunk[trunk.size() - 1]
+	var cap_r := _rng.randf_range(3.0, 4.6)
+	mb.cap(top, cap_r, cap_r * 0.32, 24, 8, cap_top, gills)
+	for i in _rng.randi_range(10, 16):
+		var a := _rng.randf() * TAU
+		var root := top + Vector3(cos(a), 0.0, sin(a)) * cap_r * _rng.randf_range(0.45, 0.88) + Vector3.DOWN * 0.15
+		var length := _rng.randf_range(1.0, 3.2)
+		var path: Array[Vector3] = []
+		var path_radii: Array[float] = []
+		for k in 5:
+			var s := k / 4.0
+			path.append(root + Vector3(sin(s * 3.0 + a) * 0.15, -length * s, cos(s * 2.0 + a) * 0.15))
+			path_radii.append(lerpf(0.05, 0.015, s))
+		mb.tube(path, path_radii, 4, gills.darkened(0.5), gills, gills, 0.0, 0.5)
+		mb.ellipsoid(path[path.size() - 1] + Vector3.DOWN * 0.05, Vector3.ONE * 0.08, gills, gills, 1.0)
+	return mb.commit()
+
+
+## Branching coral fronds whose tips glow like embers.
+func _make_coral_tree() -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var palette: Array = _pick([
+		[Color(0.3, 0.05, 0.12), Color(1.0, 0.45, 0.25)],
+		[Color(0.05, 0.12, 0.25), Color(0.4, 1.0, 0.85)],
+		[Color(0.2, 0.06, 0.28), Color(1.0, 0.5, 1.0)],
+	])
+	_coral_branch(mb, Vector3.ZERO, Vector3.UP, _rng.randf_range(2.6, 3.4), 0.4, 3, palette[0], palette[1])
+	return mb.commit()
+
+
+func _coral_branch(mb: MeshBuilder, start: Vector3, dir: Vector3, length: float, radius: float, depth: int, base: Color, tip: Color) -> void:
+	var curl := Vector3(_rng.randf_range(-1, 1), 0.0, _rng.randf_range(-1, 1)) * 0.25
+	var path: Array[Vector3] = []
+	var radii: Array[float] = []
+	for i in 6:
+		var s := i / 5.0
+		path.append(start + (dir + curl * s) * length * s)
+		radii.append(lerpf(radius, radius * 0.6, s))
+	var level := 1.0 - float(depth) / 3.0
+	var c0 := base.lerp(tip, level * 0.5)
+	var c1 := base.lerp(tip, level * 0.5 + 0.25)
+	mb.tube(path, radii, 7, c0, c1, tip, 0.0)
+	var end := path[path.size() - 1]
+	if depth == 0:
+		mb.ellipsoid(end, Vector3.ONE * radius * 2.4, tip, tip, 1.0)
+		return
+	var children := _rng.randi_range(2, 3)
+	var axis := dir.cross(Vector3.RIGHT if absf(dir.x) < 0.9 else Vector3.FORWARD).normalized()
+	for c in children:
+		var spin := c * TAU / children + _rng.randf_range(-0.5, 0.5)
+		var tilt := _rng.randf_range(0.35, 0.75)
+		var child_dir := dir.rotated(axis.rotated(dir, spin), tilt).normalized()
+		child_dir = (child_dir + Vector3.UP * 0.25).normalized()
+		_coral_branch(mb, end, child_dir, length * _rng.randf_range(0.65, 0.85), radius * 0.62, depth - 1, base, tip)
+
+
+# --- Shrubs -------------------------------------------------------------------------------------
+
+func _build_shrubs() -> void:
+	var variants: Array[ArrayMesh] = []
+	for i in 2:
+		variants.append(_make_bulb_shrub())
+		variants.append(_make_frond_shrub())
+		variants.append(_make_spike_shrub())
+	var placements: Array = []
+	for v in variants.size():
+		placements.append([])
+
+	# Shrubs grow in patches. Some sit in the arena; they are low and have no collision.
+	var placed := 0
+	while placed < shrub_count:
+		var center: Vector2
+		var inside := _rng.randf() < 0.2
+		if inside:
+			center = Vector2(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1)) * (arena_half_size - 3.0)
+			if center.length() < 5.0:
+				continue  # keep the spawn point clear
+		else:
+			var angle := _rng.randf() * TAU
+			center = Vector2(cos(angle), sin(angle)) * _rng.randf_range(arena_half_size + 3.0, 75.0)
+		for k in _rng.randi_range(3, 7):
+			var p := center + Vector2(_rng.randf_range(-3, 3), _rng.randf_range(-3, 3))
+			if inside and (absf(p.x) > arena_half_size - 1.0 or absf(p.y) > arena_half_size - 1.0):
+				continue
+			var s := _rng.randf_range(0.6, 1.0) if inside else _rng.randf_range(0.8, 1.6)
+			var xform := Transform3D(Basis(Vector3.UP, _rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(p.x, height_at(p.x, p.y) - 0.05, p.y))
+			placements[_rng.randi() % variants.size()].append(xform)
+			placed += 1
+
+	for v in variants.size():
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = variants[v]
+		mm.instance_count = placements[v].size()
+		for i in placements[v].size():
+			mm.set_instance_transform(i, placements[v][i])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.name = "Shrubs_%d" % v
+		mmi.multimesh = mm
+		mmi.material_override = _flora_material
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_generated.add_child(mmi)
+
+
+## Thin stalks topped with glowing bulbs.
+func _make_bulb_shrub() -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var stem := Color(0.08, 0.18, 0.2)
+	var bulb: Color = _pick([Color(0.3, 1.0, 0.9), Color(1.0, 0.4, 0.75), Color(0.6, 0.5, 1.0)])
+	for i in _rng.randi_range(5, 9):
+		var a := _rng.randf() * TAU
+		var h := _rng.randf_range(0.4, 1.2)
+		var out := Vector3(cos(a), 0.0, sin(a)) * _rng.randf_range(0.1, 0.45)
+		var path: Array[Vector3] = []
+		for k in 5:
+			var s := k / 4.0
+			path.append(out * s * 0.3 + out * s * s + Vector3.UP * h * s)
+		mb.tube(path, [0.035, 0.03, 0.025, 0.02, 0.018] as Array[float], 4, stem, stem.lightened(0.2), bulb, 0.0)
+		var size := _rng.randf_range(0.07, 0.14)
+		mb.ellipsoid(path[path.size() - 1] + Vector3.UP * size * 0.6, Vector3(size, size * 1.3, size), bulb, bulb, 1.0)
+	return mb.commit()
+
+
+## A fan of arching leaves with a glowing midrib.
+func _make_frond_shrub() -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var leaf: Color = _pick([Color(0.05, 0.2, 0.25), Color(0.18, 0.06, 0.25), Color(0.04, 0.12, 0.2)])
+	var rib: Color = _pick([Color(0.2, 1.0, 0.9), Color(0.8, 0.4, 1.0), Color(1.0, 0.4, 0.6)])
+	var count := _rng.randi_range(7, 11)
+	for i in count:
+		var a := i * TAU / count + _rng.randf_range(-0.2, 0.2)
+		mb.leaf(Vector3.ZERO, Vector3(cos(a), 0.0, sin(a)), _rng.randf_range(0.8, 1.5), _rng.randf_range(0.12, 0.2), _rng.randf_range(0.6, 1.1), leaf, rib)
+	return mb.commit()
+
+
+## A spray of sharp glowing spines, like a sea urchin crossed with a crystal.
+func _make_spike_shrub() -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var color: Color = _pick([Color(0.4, 0.9, 1.0), Color(0.95, 0.5, 1.0), Color(1.0, 0.65, 0.3)])
+	for i in _rng.randi_range(9, 15):
+		var dir := Vector3(_rng.randf_range(-1, 1), _rng.randf_range(0.5, 1.6), _rng.randf_range(-1, 1)).normalized()
+		mb.crystal(Vector3.ZERO, dir, _rng.randf_range(0.3, 0.8), _rng.randf_range(0.03, 0.06), color.darkened(0.6), color)
+	mb.ellipsoid(Vector3.ZERO, Vector3(0.18, 0.12, 0.18), color.darkened(0.7), color.darkened(0.5), 0.2)
+	return mb.commit()
+
+
+# --- Rocks and crystals -------------------------------------------------------------------------
+
+func _build_rocks_and_crystals() -> void:
+	var rocks: Array[ArrayMesh] = []
+	for i in 5:
+		rocks.append(_make_rock())
+	var crystals: Array[ArrayMesh] = []
+	for i in 3:
+		crystals.append(_make_crystal_cluster())
+
+	# A craggy ring of boulders hides the arena walls and frames the fight.
+	var edge := arena_half_size + 2.8
+	var d := -edge
+	while d < edge:
+		for side in 4:
+			var along := d + _rng.randf_range(-0.6, 0.6)
+			var depth := edge + _rng.randf_range(0.3, 3.0)
+			var p: Vector2
+			match side:
+				0: p = Vector2(along, -depth)
+				1: p = Vector2(along, depth)
+				2: p = Vector2(-depth, along)
+				_: p = Vector2(depth, along)
+			var s := Vector3(_rng.randf_range(2.6, 4.4), _rng.randf_range(3.0, 6.5), _rng.randf_range(2.6, 4.4))
+			_add_mesh(rocks[_rng.randi() % rocks.size()], _rock_material, Vector3(p.x, height_at(p.x, p.y) - 0.4, p.y), s, true)
+			if _rng.randf() < 0.18:
+				var c := p + Vector2(_rng.randf_range(-1.5, 1.5), _rng.randf_range(-1.5, 1.5)).limit_length(1.5)
+				_add_mesh(crystals[_rng.randi() % crystals.size()], _flora_material, Vector3(c.x, height_at(c.x, c.y), c.y), Vector3.ONE * _rng.randf_range(1.0, 2.0), false)
+		d += _rng.randf_range(2.2, 3.2)
+
+	# Outcrops and crystal clusters scattered over the hills.
+	for i in 60:
+		var angle := _rng.randf() * TAU
+		var r := _rng.randf_range(arena_half_size + 8.0, 110.0)
+		var p := Vector2(cos(angle), sin(angle)) * r
+		var big := _rng.randf_range(1.5, 5.0)
+		_add_mesh(rocks[_rng.randi() % rocks.size()], _rock_material, Vector3(p.x, height_at(p.x, p.y) - big * 0.2, p.y), Vector3(big, big * _rng.randf_range(0.6, 1.8), big), true)
+	for i in 35:
+		var angle := _rng.randf() * TAU
+		var r := _rng.randf_range(arena_half_size + 5.0, 80.0)
+		var p := Vector2(cos(angle), sin(angle)) * r
+		_add_mesh(crystals[_rng.randi() % crystals.size()], _flora_material, Vector3(p.x, height_at(p.x, p.y) - 0.1, p.y), Vector3.ONE * _rng.randf_range(1.2, 3.0), false)
+
+
+func _add_mesh(mesh: Mesh, material: Material, pos: Vector3, scale_by: Vector3, shadows: bool) -> void:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = material
+	mi.transform = Transform3D(Basis(Vector3.UP, _rng.randf() * TAU).scaled(scale_by), pos)
+	if not shadows:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_generated.add_child(mi)
+
+
+## A lumpy unit boulder with mossy tops and specks of glowing lichen.
+func _make_rock() -> ArrayMesh:
+	var noise := FastNoiseLite.new()
+	noise.seed = _rng.randi()
+	noise.frequency = 1.6
+	noise.fractal_octaves = 3
+	var lichen: Color = _pick([Color(0.2, 0.9, 1.0), Color(0.85, 0.4, 1.0)])
+	var mb := MeshBuilder.new()
+	var rings := 10
+	var segs := 14
+	var grid: Array = []
+	for i in rings + 1:
+		var row: Array[Vector3] = []
+		var v := float(i) / rings
+		var phi := v * PI
+		for j in segs:
+			var theta := float(j) / segs * TAU
+			var n := Vector3(sin(phi) * cos(theta), cos(phi), sin(phi) * sin(theta))
+			var bump := 1.0 + noise.get_noise_3dv(n) * 0.45
+			var p := n * bump * 0.5
+			p.y = maxf(p.y, -0.25) + 0.25  # flat bottom, sitting on y = 0
+			row.append(p)
+		grid.append(row)
+	for i in rings:
+		for j in segs:
+			var a: Vector3 = grid[i][j]
+			var b: Vector3 = grid[i][(j + 1) % segs]
+			var c: Vector3 = grid[i + 1][j]
+			var dd: Vector3 = grid[i + 1][(j + 1) % segs]
+			for tri in [[a, b, c], [b, dd, c]]:
+				var n: Vector3 = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalized()
+				if n.dot(tri[0] - Vector3(0, 0.25, 0)) < 0.0:
+					n = -n
+				var cols: Array[Color] = []
+				for p: Vector3 in tri:
+					var moss := smoothstep(0.4, 0.8, n.y)
+					var col := Color(0.34, 0.28, 0.4).lerp(Color(0.14, 0.32, 0.33), moss)
+					col = col.darkened(0.25 * (1.0 - p.y))
+					col.a = 0.0
+					if noise.get_noise_3dv(p * 6.0 + Vector3(9, 9, 9)) > 0.42:
+						col = lichen
+						col.a = 0.8
+					cols.append(col)
+				mb.triangle(tri[0], tri[1], tri[2], n, n, n, cols[0], cols[1], cols[2])
+	return mb.commit()
+
+
+## Several glowing prisms jutting from one spot.
+func _make_crystal_cluster() -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var color: Color = _pick([Color(0.3, 0.85, 1.0), Color(0.9, 0.35, 1.0), Color(0.4, 1.0, 0.75)])
+	for i in _rng.randi_range(4, 7):
+		var dir := Vector3(_rng.randf_range(-0.6, 0.6), 1.0, _rng.randf_range(-0.6, 0.6)).normalized()
+		var base := Vector3(_rng.randf_range(-0.25, 0.25), -0.1, _rng.randf_range(-0.25, 0.25))
+		mb.crystal(base, dir, _rng.randf_range(0.6, 1.6), _rng.randf_range(0.08, 0.18), color.darkened(0.3), color.lightened(0.3))
+	return mb.commit()
+
+
+# --- Spores -------------------------------------------------------------------------------------
+
+func _build_spores() -> void:
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.14, 0.14)
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	material.vertex_color_use_as_albedo = true
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var dot := GradientTexture2D.new()
+	dot.fill = GradientTexture2D.FILL_RADIAL
+	dot.fill_from = Vector2(0.5, 0.5)
+	dot.fill_to = Vector2(1.0, 0.5)
+	dot.gradient = Gradient.new()
+	dot.gradient.set_color(0, Color(1, 1, 1, 1))
+	dot.gradient.set_color(1, Color(1, 1, 1, 0))
+	dot.width = 32
+	dot.height = 32
+	material.albedo_texture = dot
+	quad.material = material
+
+	var fade := Gradient.new()
+	fade.set_color(0, Color(0.4, 1.0, 0.95, 0.0))
+	fade.set_color(1, Color(0.8, 0.5, 1.0, 0.0))
+	fade.add_point(0.2, Color(0.4, 1.0, 0.95, 1.0))
+	fade.add_point(0.8, Color(0.8, 0.5, 1.0, 1.0))
+
+	var spores := CPUParticles3D.new()
+	spores.name = "Spores"
+	spores.mesh = quad
+	spores.amount = spore_count
+	spores.lifetime = 14.0
+	spores.preprocess = 14.0
+	spores.position = Vector3(0, 2.5, 0)
+	spores.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	spores.emission_box_extents = Vector3(45, 3, 45)
+	spores.direction = Vector3.UP
+	spores.spread = 180.0
+	spores.initial_velocity_min = 0.05
+	spores.initial_velocity_max = 0.3
+	spores.gravity = Vector3(0.05, 0.06, 0.02)
+	spores.scale_amount_min = 0.5
+	spores.scale_amount_max = 1.6
+	spores.color_ramp = fade
+	spores.visibility_aabb = AABB(Vector3(-50, -5, -50), Vector3(100, 20, 100))
+	_generated.add_child(spores)
+
+
+func _pick(options: Array) -> Variant:
+	return options[_rng.randi() % options.size()]
+
+
+static func _sample_path(path: Array[Vector3], t: float) -> Vector3:
+	var f := clampf(t, 0.0, 1.0) * (path.size() - 1)
+	var i := mini(int(f), path.size() - 2)
+	return path[i].lerp(path[i + 1], f - i)
+
+
+## Collects triangles with per-vertex colours (alpha = glow) and turns them into one mesh.
+class MeshBuilder:
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+
+	func triangle(a: Vector3, b: Vector3, c: Vector3, na: Vector3, nb: Vector3, nc: Vector3, ca: Color, cb: Color, cc: Color) -> void:
+		verts.append_array([a, b, c])
+		normals.append_array([na, nb, nc])
+		colors.append_array([ca, cb, cc])
+
+	func quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, na: Vector3, nb: Vector3, nc: Vector3, nd: Vector3, ca: Color, cb: Color, cc: Color, cd: Color) -> void:
+		triangle(a, b, c, na, nb, nc, ca, cb, cc)
+		triangle(b, d, c, nb, nd, nc, cb, cd, cc)
+
+	## A tube along a path. Colour fades from color_a to color_b; stripe_count spiral veins glow.
+	func tube(path: Array[Vector3], radii: Array[float], sides: int, color_a: Color, color_b: Color, vein: Color, stripe_count: float, glow_end := 0.0) -> void:
+		var rings: Array = []
+		var ring_normals: Array = []
+		var ring_colors: Array = []
+		var tangent := (path[1] - path[0]).normalized()
+		var normal := tangent.cross(Vector3.RIGHT if absf(tangent.x) < 0.9 else Vector3.FORWARD).normalized()
+		for i in path.size():
+			var t := float(i) / (path.size() - 1)
+			var next_tangent := (path[mini(i + 1, path.size() - 1)] - path[maxi(i - 1, 0)]).normalized()
+			# Parallel transport keeps the ring from twisting as the path bends.
+			normal = (normal - next_tangent * normal.dot(next_tangent)).normalized()
+			tangent = next_tangent
+			var binormal := tangent.cross(normal)
+			var ring: Array[Vector3] = []
+			var ns: Array[Vector3] = []
+			var cs: Array[Color] = []
+			for s in sides + 1:
+				var a := float(s) / sides * TAU
+				var dir := normal * cos(a) + binormal * sin(a)
+				ring.append(path[i] + dir * radii[i])
+				ns.append(dir)
+				var col := color_a.lerp(color_b, t)
+				col.a = glow_end * t * t
+				if stripe_count > 0.0 and sin(a * stripe_count + t * 14.0) > 0.88:
+					col = vein
+					col.a = 0.7
+				cs.append(col)
+			rings.append(ring)
+			ring_normals.append(ns)
+			ring_colors.append(cs)
+		for i in path.size() - 1:
+			for s in sides:
+				quad(rings[i][s], rings[i][s + 1], rings[i + 1][s], rings[i + 1][s + 1],
+					ring_normals[i][s], ring_normals[i][s + 1], ring_normals[i + 1][s], ring_normals[i + 1][s + 1],
+					ring_colors[i][s], ring_colors[i][s + 1], ring_colors[i + 1][s], ring_colors[i + 1][s + 1])
+
+	## An ellipsoid shading from bottom_color to top_color.
+	func ellipsoid(center: Vector3, radii: Vector3, bottom_color: Color, top_color: Color, glow: float, rings := 8, segs := 12) -> void:
+		var grid: Array = []
+		var grid_n: Array = []
+		var grid_c: Array = []
+		for i in rings + 1:
+			var phi := float(i) / rings * PI
+			var row: Array[Vector3] = []
+			var row_n: Array[Vector3] = []
+			var row_c: Array[Color] = []
+			for j in segs + 1:
+				var theta := float(j) / segs * TAU
+				var n := Vector3(sin(phi) * cos(theta), cos(phi), sin(phi) * sin(theta))
+				row.append(center + n * radii)
+				row_n.append((n / radii).normalized())
+				var col := bottom_color.lerp(top_color, 0.5 + 0.5 * n.y)
+				col.a = glow
+				row_c.append(col)
+			grid.append(row)
+			grid_n.append(row_n)
+			grid_c.append(row_c)
+		for i in rings:
+			for j in segs:
+				quad(grid[i][j], grid[i][j + 1], grid[i + 1][j], grid[i + 1][j + 1],
+					grid_n[i][j], grid_n[i][j + 1], grid_n[i + 1][j], grid_n[i + 1][j + 1],
+					grid_c[i][j], grid_c[i][j + 1], grid_c[i + 1][j], grid_c[i + 1][j + 1])
+
+	## A mushroom cap: dark dome on top, glowing ribbed gills underneath.
+	func cap(center: Vector3, radius: float, height: float, segs: int, rings: int, top_color: Color, gill_color: Color) -> void:
+		var top: Array = []
+		for i in rings + 1:
+			var v := float(i) / rings
+			var r := radius * sin(v * PI * 0.5)
+			var y := height * cos(v * PI * 0.5) - height * 0.25 * v * v
+			var row: Array[Vector3] = []
+			for j in segs + 1:
+				var a := float(j) / segs * TAU
+				var wobble := 1.0 + 0.06 * sin(a * 5.0)
+				row.append(center + Vector3(cos(a) * r * wobble, y, sin(a) * r * wobble))
+			top.append(row)
+		for i in rings:
+			var v := float(i) / rings
+			for j in segs:
+				var n: Vector3 = (top[i][j + 1] - top[i][j]).cross(top[i + 1][j] - top[i][j]).normalized()
+				if n.y < 0.0:
+					n = -n
+				var c0 := top_color.lightened(0.15 * v)
+				var c1 := top_color.lightened(0.15 * (v + 1.0 / rings))
+				c0.a = 0.0
+				c1.a = 0.0
+				if i == rings - 1:
+					c1 = gill_color
+					c1.a = 0.9
+				quad(top[i][j], top[i][j + 1], top[i + 1][j], top[i + 1][j + 1], n, n, n, n, c0, c0, c1, c1)
+		# Underside: a shallow cone from the rim up to the stalk, striped like gills.
+		var hub := center + Vector3.DOWN * height * 0.1
+		var rim: Array = top[rings]
+		for j in segs:
+			var gill := 0.4 + 0.6 * absf(sin(float(j) / segs * PI * 6.0))
+			var col := gill_color.darkened(0.2 * (1.0 - gill))
+			col.a = gill
+			var hub_col := gill_color.darkened(0.6)
+			hub_col.a = 0.3
+			triangle(hub, rim[j + 1], rim[j], Vector3.DOWN, Vector3.DOWN, Vector3.DOWN, hub_col, col, col)
+
+	## A curved leaf blade with a glowing midrib.
+	func leaf(base: Vector3, dir: Vector3, length: float, width: float, rise: float, color: Color, rib: Color) -> void:
+		var side := dir.cross(Vector3.UP).normalized()
+		var segments := 6
+		var prev: Array[Vector3] = []
+		var prev_c: Array[Color] = []
+		for s in segments + 1:
+			var t := float(s) / segments
+			var center := base + dir * length * t + Vector3.UP * (sin(t * PI * 0.75) * rise - t * t * rise * 0.4)
+			var w := width * sin(t * PI) * (1.0 - t * 0.3)
+			var droop := Vector3.DOWN * w * 0.3
+			var row: Array[Vector3] = [center - side * w + droop, center, center + side * w + droop]
+			var edge := color.lerp(rib, t * 0.3)
+			edge.a = t * 0.15
+			var mid := rib
+			mid.a = 0.3 + 0.6 * t
+			var row_c: Array[Color] = [edge, mid, edge]
+			if s > 0:
+				for k in 2:
+					var n := (row[k] - prev[k]).cross(prev[k + 1] - prev[k]).normalized()
+					if n.y < 0.0:
+						n = -n
+					quad(prev[k], prev[k + 1], row[k], row[k + 1], n, n, n, n, prev_c[k], prev_c[k + 1], row_c[k], row_c[k + 1])
+			prev = row
+			prev_c = row_c
+
+	## A six-sided pointed prism.
+	func crystal(base: Vector3, dir: Vector3, length: float, radius: float, base_color: Color, tip_color: Color) -> void:
+		var side := dir.cross(Vector3.RIGHT if absf(dir.x) < 0.9 else Vector3.FORWARD).normalized()
+		var other := dir.cross(side)
+		var shoulder := base + dir * length * 0.75
+		var tip := base + dir * length
+		var bc := base_color
+		bc.a = 0.35
+		var sc := tip_color.lerp(base_color, 0.3)
+		sc.a = 0.8
+		var tc := tip_color
+		tc.a = 1.0
+		for i in 6:
+			var a0 := float(i) / 6.0 * TAU
+			var a1 := float(i + 1) / 6.0 * TAU
+			var d0 := side * cos(a0) + other * sin(a0)
+			var d1 := side * cos(a1) + other * sin(a1)
+			var n := (d0 + d1).normalized()
+			quad(base + d0 * radius, base + d1 * radius, shoulder + d0 * radius, shoulder + d1 * radius, n, n, n, n, bc, bc, sc, sc)
+			var tn := (n + dir * 0.6).normalized()
+			triangle(shoulder + d0 * radius, shoulder + d1 * radius, tip, tn, tn, tn, sc, sc, tc)
+
+	func commit() -> ArrayMesh:
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		arrays[Mesh.ARRAY_COLOR] = colors
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		return mesh
