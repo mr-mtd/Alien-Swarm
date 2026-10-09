@@ -1,6 +1,7 @@
 class_name Player
 extends CharacterBody3D
-## Third-person player: camera-relative movement, jump, dodge roll and a three-hit sword combo.
+## Third-person player: camera-relative movement, jump, dodge roll and a three-hit claw combo.
+## Drives the Emberline Strider model's Idle, Walk and Attack animations.
 
 signal health_changed(current: int, maximum: int)
 signal died
@@ -25,6 +26,17 @@ signal died
 ## Invulnerability time after taking a hit.
 @export var hurt_invulnerability := 0.5
 
+@export_group("Animation")
+## Playback speed of the Attack animation (1.0 is the speed it was authored at).
+@export var attack_anim_speed := 1.4
+## Point in the Attack animation, in seconds, where the claws connect and damage is dealt.
+@export var attack_hit_time := 0.5
+## Point in the Attack animation, in seconds, where the swing is over and the next can start.
+@export var attack_end_time := 1.0
+## Walk animation playback speed when moving at full move_speed.
+@export var walk_anim_speed := 1.3
+@export var anim_blend_time := 0.15
+
 @export_group("Camera")
 @export var mouse_sensitivity := 0.003
 @export var min_pitch := deg_to_rad(-60.0)
@@ -46,9 +58,12 @@ var _hurt_material := StandardMaterial3D.new()
 @onready var _camera_pivot: Node3D = $CameraPivot
 @onready var _spring_arm: SpringArm3D = $CameraPivot/SpringArm3D
 @onready var _model: Node3D = $Model
-@onready var _body_mesh: MeshInstance3D = $Model/Body
-@onready var _weapon_pivot: Node3D = $Model/WeaponPivot
 @onready var _hitbox: Area3D = $Model/Hitbox
+@onready var _anim: AnimationPlayer = $Model/Strider.find_child("AnimationPlayer") as AnimationPlayer
+@onready var _meshes: Array[Node] = $Model/Strider.find_children("*", "MeshInstance3D")
+@onready var _idle_anim := _find_anim(["Idle", "Idle-loop"])
+@onready var _walk_anim := _find_anim(["Walk", "Walk-loop"])
+@onready var _attack_anim := _find_anim(["Attack"])
 
 
 func _ready() -> void:
@@ -56,6 +71,10 @@ func _ready() -> void:
 	_hurt_material.albedo_color = Color(1, 0.2, 0.2)
 	_hurt_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	for anim_name in [_idle_anim, _walk_anim]:
+		if anim_name != &"":
+			_anim.get_animation(anim_name).loop_mode = Animation.LOOP_LINEAR
+	_play(_idle_anim)
 	health_changed.emit(health, max_health)
 
 
@@ -123,6 +142,7 @@ func _physics_process(delta: float) -> void:
 			_face(_move_direction, delta)
 
 	move_and_slide()
+	_update_locomotion_anim()
 
 
 func take_damage(amount: int, knockback: Vector3 = Vector3.ZERO) -> void:
@@ -149,29 +169,20 @@ func _attack_sequence() -> void:
 		await _swing(step)
 		if is_dead or not _combo_queued or step >= 3:
 			break
-	var reset := create_tween()
-	reset.tween_property(_weapon_pivot, "rotation", Vector3.ZERO, 0.1)
-	await reset.finished
 	_attacking = false
 
 
 func _swing(step: int) -> void:
-	var from := Vector3(0.0, deg_to_rad(80.0), 0.0)
-	var to := Vector3(0.0, deg_to_rad(-80.0), 0.0)
-	if step == 2:
-		var swap := from
-		from = to
-		to = swap
-	elif step == 3:
-		# Finisher: an overhead slam.
-		from = Vector3(deg_to_rad(80.0), 0.0, 0.0)
-		to = Vector3(deg_to_rad(-70.0), 0.0, 0.0)
-	_weapon_pivot.rotation = from
-	var tween := create_tween()
-	tween.tween_property(_weapon_pivot, "rotation", to, 0.16 if step == 3 else 0.12)
-	tween.tween_callback(_apply_hit.bind(step))
-	tween.tween_interval(0.3 if step == 3 else 0.18)
-	await tween.finished
+	# The finisher plays a little slower so it reads as a heavier blow.
+	var speed := attack_anim_speed * (0.85 if step == 3 else 1.0)
+	_anim.speed_scale = 1.0
+	_anim.play(_attack_anim, 0.05, speed)
+	_anim.seek(0.0, true)
+	await get_tree().create_timer(attack_hit_time / speed, false, true).timeout
+	if is_dead:
+		return
+	_apply_hit(step)
+	await get_tree().create_timer((attack_end_time - attack_hit_time) / speed, false, true).timeout
 
 
 func _apply_hit(step: int) -> void:
@@ -184,15 +195,44 @@ func _apply_hit(step: int) -> void:
 
 func _die() -> void:
 	is_dead = true
+	_anim.pause()
 	var tween := create_tween()
 	tween.tween_property(_model, "rotation:x", deg_to_rad(-90.0), 0.4)
 	died.emit()
 
 
 func _flash() -> void:
-	_body_mesh.material_override = _hurt_material
+	for mesh: MeshInstance3D in _meshes:
+		mesh.material_overlay = _hurt_material
 	await get_tree().create_timer(0.1).timeout
-	_body_mesh.material_override = null
+	for mesh: MeshInstance3D in _meshes:
+		mesh.material_overlay = null
+
+
+func _update_locomotion_anim() -> void:
+	if is_dead or _attacking:
+		return
+	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
+	if horizontal_speed > 0.5:
+		_play(_walk_anim, walk_anim_speed * clampf(horizontal_speed / move_speed, 0.5, 2.0))
+	else:
+		_play(_idle_anim)
+
+
+func _play(anim_name: StringName, speed := 1.0) -> void:
+	if anim_name == &"":
+		return
+	if _anim.current_animation != anim_name:
+		_anim.play(anim_name, anim_blend_time)
+	_anim.speed_scale = speed
+
+
+func _find_anim(candidates: Array[String]) -> StringName:
+	for anim_name in candidates:
+		if _anim.has_animation(anim_name):
+			return StringName(anim_name)
+	push_warning("Player model has no animation named %s" % candidates[0])
+	return &""
 
 
 func _face(direction: Vector3, delta: float) -> void:

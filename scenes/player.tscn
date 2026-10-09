@@ -1,41 +1,11 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
+[ext_resource type="PackedScene" path="res://3dModels/emberline_strider_game.glb" id="2_strider"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_body"]
 radius = 0.4
 height = 1.8
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_body"]
-radius = 0.4
-height = 1.8
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_body"]
-albedo_color = Color(0.2, 0.45, 0.85, 1)
-
-[sub_resource type="BoxMesh" id="BoxMesh_visor"]
-size = Vector3(0.5, 0.15, 0.2)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_visor"]
-albedo_color = Color(1, 0.8, 0.2, 1)
-emission_enabled = true
-emission = Color(1, 0.7, 0.1, 1)
-
-[sub_resource type="BoxMesh" id="BoxMesh_blade"]
-size = Vector3(0.08, 0.08, 1.2)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_blade"]
-albedo_color = Color(0.8, 0.9, 1, 1)
-metallic = 0.8
-roughness = 0.2
-emission_enabled = true
-emission = Color(0.3, 0.6, 1, 1)
-
-[sub_resource type="BoxMesh" id="BoxMesh_hilt"]
-size = Vector3(0.12, 0.12, 0.25)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_hilt"]
-albedo_color = Color(0.15, 0.15, 0.18, 1)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hitbox"]
 size = Vector3(2.8, 1.6, 2.2)
@@ -52,28 +22,8 @@ shape = SubResource("CapsuleShape3D_body")
 
 [node name="Model" type="Node3D" parent="."]
 
-[node name="Body" type="MeshInstance3D" parent="Model"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
-mesh = SubResource("CapsuleMesh_body")
-surface_material_override/0 = SubResource("StandardMaterial3D_body")
-
-[node name="Visor" type="MeshInstance3D" parent="Model"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.45, -0.32)
-mesh = SubResource("BoxMesh_visor")
-surface_material_override/0 = SubResource("StandardMaterial3D_visor")
-
-[node name="WeaponPivot" type="Node3D" parent="Model"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.5, 1, -0.1)
-
-[node name="Hilt" type="MeshInstance3D" parent="Model/WeaponPivot"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.1)
-mesh = SubResource("BoxMesh_hilt")
-surface_material_override/0 = SubResource("StandardMaterial3D_hilt")
-
-[node name="Blade" type="MeshInstance3D" parent="Model/WeaponPivot"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.8)
-mesh = SubResource("BoxMesh_blade")
-surface_material_override/0 = SubResource("StandardMaterial3D_blade")
+[node name="Strider" parent="Model" instance=ExtResource("2_strider")]
+transform = Transform3D(-0.7, 0, 0, 0, 0.7, 0, 0, 0, -0.7, 0, 0, 0)
 
 [node name="Hitbox" type="Area3D" parent="Model"]
 collision_layer = 0
