@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://cbic4qvduyv3f"]
+
+[ext_resource type="PackedScene" uid="uid://b7l5cjyihcueh" path="res://3dModels/emberline_strider.glb" id="1_lk5b4"]
+
+[node name="Node3D" type="Node3D" unique_id=608041983]
+
+[node name="emberline_strider" parent="." unique_id=1323878342 instance=ExtResource("1_lk5b4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0017758608, 0, 0.17797875)
