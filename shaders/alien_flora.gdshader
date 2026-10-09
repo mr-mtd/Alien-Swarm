@@ -6,7 +6,7 @@ render_mode cull_disabled;
 uniform float glow_strength = 2.5;
 uniform float sway = 0.03;
 uniform float roughness_value = 0.65;
-uniform vec3 rim_color : source_color = vec3(0.45, 0.3, 0.8);
+uniform vec3 rim_color : source_color = vec3(0.25, 0.45, 0.9);
 uniform float rim_strength = 0.35;
 
 varying float glow;

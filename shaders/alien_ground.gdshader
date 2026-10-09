@@ -1,12 +1,12 @@
 shader_type spatial;
 // Alien ground: mottled moss and soil, rock on steep slopes, and slowly pulsing glowing veins.
 
-uniform vec3 moss_color_a : source_color = vec3(0.05, 0.13, 0.15);
-uniform vec3 moss_color_b : source_color = vec3(0.13, 0.07, 0.18);
-uniform vec3 soil_color : source_color = vec3(0.09, 0.06, 0.08);
-uniform vec3 rock_color : source_color = vec3(0.16, 0.13, 0.19);
-uniform vec3 vein_color : source_color = vec3(0.1, 0.9, 1.0);
-uniform vec3 spore_color : source_color = vec3(0.85, 0.25, 1.0);
+uniform vec3 moss_color_a : source_color = vec3(0.05, 0.1, 0.18);
+uniform vec3 moss_color_b : source_color = vec3(0.16, 0.09, 0.05);
+uniform vec3 soil_color : source_color = vec3(0.12, 0.07, 0.04);
+uniform vec3 rock_color : source_color = vec3(0.17, 0.16, 0.18);
+uniform vec3 vein_color : source_color = vec3(1.0, 0.45, 0.1);
+uniform vec3 spore_color : source_color = vec3(0.2, 0.6, 1.0);
 uniform float vein_strength = 1.8;
 
 varying vec3 world_pos;

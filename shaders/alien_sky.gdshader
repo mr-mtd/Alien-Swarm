@@ -1,10 +1,10 @@
 shader_type sky;
 // Space sky for the alien world: nebula clouds, twinkling stars, a ringed gas giant and a small moon.
 
-uniform vec3 zenith_color : source_color = vec3(0.01, 0.005, 0.03);
-uniform vec3 horizon_color : source_color = vec3(0.16, 0.06, 0.22);
-uniform vec3 nebula_color_a : source_color = vec3(0.55, 0.12, 0.65);
-uniform vec3 nebula_color_b : source_color = vec3(0.05, 0.45, 0.6);
+uniform vec3 zenith_color : source_color = vec3(0.004, 0.01, 0.035);
+uniform vec3 horizon_color : source_color = vec3(0.28, 0.12, 0.05);
+uniform vec3 nebula_color_a : source_color = vec3(0.1, 0.3, 0.8);
+uniform vec3 nebula_color_b : source_color = vec3(0.85, 0.35, 0.08);
 uniform float nebula_strength = 1.2;
 uniform float star_density = 0.0025;
 uniform float star_brightness = 4.0;
@@ -12,17 +12,17 @@ uniform float star_brightness = 4.0;
 uniform vec3 planet_direction = vec3(-0.55, 0.38, -0.74);
 uniform float planet_distance = 10.0;
 uniform float planet_radius = 2.2;
-uniform vec3 planet_color_a : source_color = vec3(0.85, 0.45, 0.3);
-uniform vec3 planet_color_b : source_color = vec3(0.35, 0.12, 0.35);
-uniform vec3 planet_atmosphere : source_color = vec3(1.0, 0.55, 0.8);
+uniform vec3 planet_color_a : source_color = vec3(0.95, 0.55, 0.2);
+uniform vec3 planet_color_b : source_color = vec3(0.35, 0.12, 0.04);
+uniform vec3 planet_atmosphere : source_color = vec3(0.4, 0.7, 1.0);
 uniform vec3 ring_normal = vec3(-0.6, 1.0, -0.1);
-uniform vec3 ring_color : source_color = vec3(0.9, 0.75, 0.85);
+uniform vec3 ring_color : source_color = vec3(0.85, 0.8, 0.75);
 
 uniform vec3 moon_direction = vec3(0.6, 0.55, -0.6);
 uniform float moon_size = 0.03;
 uniform vec3 moon_color : source_color = vec3(0.75, 0.9, 1.0);
 
-uniform vec3 sun_glow_color : source_color = vec3(1.0, 0.55, 0.75);
+uniform vec3 sun_glow_color : source_color = vec3(1.0, 0.6, 0.25);
 
 float hash31(vec3 p) {
 	p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));

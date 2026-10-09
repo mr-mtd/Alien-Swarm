@@ -34,7 +34,7 @@ scripts/main.gd     Wave spawning, game over and restart
 scripts/player.gd   Movement, dodge, combo attacks, health
 scripts/enemy.gd    Chase, telegraphed attack, stagger, death
 scripts/hud.gd      Health bar, wave and kill counters, messages
-scripts/alien_terrain.gd  Generates ground, grass, trees, shrubs, rocks, crystals and spores
+scripts/alien_terrain.gd  Generates ground, grass, trees, shrubs, rocks, crystals, spores and point lights
 shaders/            Sky (nebula, stars, ringed planet), ground, grass and plant shaders
 ```
 
