@@ -59,11 +59,11 @@ var _hurt_material := StandardMaterial3D.new()
 @onready var _spring_arm: SpringArm3D = $CameraPivot/SpringArm3D
 @onready var _model: Node3D = $Model
 @onready var _hitbox: Area3D = $Model/Hitbox
-@onready var _anim: AnimationPlayer = $Model/Strider.find_child("AnimationPlayer") as AnimationPlayer
+@onready var _anim: AnimationPlayer = _find_anim_player()
 @onready var _meshes: Array[Node] = $Model/Strider.find_children("*", "MeshInstance3D")
-@onready var _idle_anim := _find_anim(["Idle", "Idle-loop"])
-@onready var _walk_anim := _find_anim(["Walk", "Walk-loop"])
-@onready var _attack_anim := _find_anim(["Attack"])
+@onready var _idle_anim := _find_anim("idle")
+@onready var _walk_anim := _find_anim("walk")
+@onready var _attack_anim := _find_anim("attack")
 
 
 func _ready() -> void:
@@ -175,9 +175,10 @@ func _attack_sequence() -> void:
 func _swing(step: int) -> void:
 	# The finisher plays a little slower so it reads as a heavier blow.
 	var speed := attack_anim_speed * (0.85 if step == 3 else 1.0)
-	_anim.speed_scale = 1.0
-	_anim.play(_attack_anim, 0.05, speed)
-	_anim.seek(0.0, true)
+	if _attack_anim != &"":
+		_anim.speed_scale = 1.0
+		_anim.play(_attack_anim, 0.05, speed)
+		_anim.seek(0.0, true)
 	await get_tree().create_timer(attack_hit_time / speed, false, true).timeout
 	if is_dead:
 		return
@@ -195,7 +196,8 @@ func _apply_hit(step: int) -> void:
 
 func _die() -> void:
 	is_dead = true
-	_anim.pause()
+	if _anim:
+		_anim.pause()
 	var tween := create_tween()
 	tween.tween_property(_model, "rotation:x", deg_to_rad(-90.0), 0.4)
 	died.emit()
@@ -220,18 +222,33 @@ func _update_locomotion_anim() -> void:
 
 
 func _play(anim_name: StringName, speed := 1.0) -> void:
-	if anim_name == &"":
+	if anim_name == &"" or not _anim:
 		return
 	if _anim.current_animation != anim_name:
 		_anim.play(anim_name, anim_blend_time)
 	_anim.speed_scale = speed
 
 
-func _find_anim(candidates: Array[String]) -> StringName:
-	for anim_name in candidates:
-		if _anim.has_animation(anim_name):
-			return StringName(anim_name)
-	push_warning("Player model has no animation named %s" % candidates[0])
+func _find_anim_player() -> AnimationPlayer:
+	var players := $Model/Strider.find_children("*", "AnimationPlayer", true, false)
+	if players.is_empty():
+		push_error("Player: no AnimationPlayer found under Model/Strider. Check the .glb imports with animations enabled.")
+		return null
+	return players[0]
+
+
+## Finds an animation by base name, ignoring case, any library prefix ("lib/Idle")
+## and loop suffixes ("Idle-loop", "Idle_loop"), so import setting changes don't break it.
+func _find_anim(base_name: String) -> StringName:
+	if not _anim:
+		return &""
+	for anim_name in _anim.get_animation_list():
+		var short := String(anim_name).get_slice("/", String(anim_name).get_slice_count("/") - 1).to_lower()
+		for suffix in ["-loop", "_loop", "-cycle", "_cycle"]:
+			short = short.trim_suffix(suffix)
+		if short == base_name:
+			return anim_name
+	push_error("Player: model has no '%s' animation. Found: %s" % [base_name, _anim.get_animation_list()])
 	return &""
 
 
