@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
@@ -31,12 +31,6 @@ fog_light_color = Color(0.12, 0.14, 0.26, 1)
 fog_density = 0.007
 fog_sky_affect = 0.15
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_floor"]
-size = Vector3(40, 1, 40)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_wall"]
-size = Vector3(42, 3, 1)
-
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_health"]
 bg_color = Color(0.8, 0.15, 0.15, 1)
 
@@ -52,38 +46,6 @@ light_color = Color(1, 0.72, 0.45, 1)
 light_energy = 1.1
 shadow_enabled = true
 directional_shadow_max_distance = 60.0
-
-[node name="Arena" type="Node3D" parent="."]
-
-[node name="Floor" type="StaticBody3D" parent="Arena"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Arena/Floor"]
-shape = SubResource("BoxShape3D_floor")
-
-[node name="WallNorth" type="StaticBody3D" parent="Arena"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, -20.5)
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Arena/WallNorth"]
-shape = SubResource("BoxShape3D_wall")
-
-[node name="WallSouth" type="StaticBody3D" parent="Arena"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 20.5)
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Arena/WallSouth"]
-shape = SubResource("BoxShape3D_wall")
-
-[node name="WallEast" type="StaticBody3D" parent="Arena"]
-transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 20.5, 1.5, 0)
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Arena/WallEast"]
-shape = SubResource("BoxShape3D_wall")
-
-[node name="WallWest" type="StaticBody3D" parent="Arena"]
-transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -20.5, 1.5, 0)
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Arena/WallWest"]
-shape = SubResource("BoxShape3D_wall")
 
 [node name="AlienTerrain" parent="." instance=ExtResource("5_terrain")]
 

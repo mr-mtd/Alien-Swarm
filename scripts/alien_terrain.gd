@@ -1,25 +1,31 @@
 @tool
 class_name AlienTerrain
 extends Node3D
-## Builds the alien world around the arena from code: rolling ground with glowing veins,
-## swaying grass, alien trees, shrubs, rocks, crystals, drifting spores and coloured point lights.
-## Everything is decoration with no collision, so the arena's floor and walls still do all the
-## gameplay work. Change world_seed for a different layout.
+## Builds the open alien world from code: rolling walkable ground with glowing veins, swaying grass,
+## fiddlehead ferns, alien trees, shrubs, rocks, crystals, drifting spores and coloured point lights.
+## The ground, tree trunks and boulders have collision; plants are decoration you walk through.
+## The playable area is a circle of play_radius around the origin, ringed by rising mountains and
+## an invisible wall. Change world_seed for a different layout.
 
 const GROUND_SHADER := preload("res://shaders/alien_ground.gdshader")
 const GRASS_SHADER := preload("res://shaders/alien_grass.gdshader")
 const FLORA_SHADER := preload("res://shaders/alien_flora.gdshader")
 
 @export var world_seed := 7: set = _set_world_seed
-## Half the width of the flat, playable square in the middle (matches the arena walls).
-@export var arena_half_size := 20.0
+## Radius of the flat clearing the player starts in.
+@export var clearing_radius := 10.0
+## How far from the origin the player can roam before the mountains and edge wall stop them.
+@export var play_radius := 90.0
+## Height of the rolling hills across the playable area. Keep it low enough to walk up.
+@export var hill_height := 7.0
 @export var world_size := 300.0
-@export var grass_clumps := 7000
-@export var grass_radius := 58.0
+@export var grass_clumps := 3500
+@export var grass_radius := 70.0
+@export var fern_count := 350
 @export var tree_count := 90
 @export var shrub_count := 260
 @export var spore_count := 500
-## Point lights cast from glowing trees, crystals and shrubs near the arena.
+## Point lights cast from glowing trees, crystals and shrubs across the map.
 @export var point_lights := true
 @export var light_energy := 2.2
 ## Lights farther than this from the camera fade out to keep the frame rate up.
@@ -34,6 +40,9 @@ var _patches := FastNoiseLite.new()
 var _generated: Node3D
 var _grass_material: ShaderMaterial
 var _player: Node3D
+var _spores: CPUParticles3D
+# Trunks and boulders the player collides with, as (x, z, radius), so spawns can avoid them.
+var _obstacles: Array[Vector3] = []
 
 var _flora_material: ShaderMaterial
 var _rock_material: ShaderMaterial
@@ -53,6 +62,8 @@ func _process(_delta: float) -> void:
 		_player = get_tree().get_first_node_in_group("player") as Node3D
 	if _player:
 		_grass_material.set_shader_parameter("player_position", _player.global_position)
+		# Spores drift around wherever the player is; particles already emitted stay put.
+		_spores.global_position = _player.global_position + Vector3.UP * 2.5
 
 
 func _set_world_seed(value: int) -> void:
@@ -66,15 +77,23 @@ func _set_rebuild(_value: bool) -> void:
 		_build()
 
 
-## Ground height at a world position. Zero across the arena, rising into hills and far mountains.
+## Ground height at a world position. Zero in the starting clearing, rolling hills across the
+## playable area and mountains rising around its edge.
 func height_at(x: float, z: float) -> float:
-	var outside := Vector2(maxf(absf(x) - arena_half_size, 0.0), maxf(absf(z) - arena_half_size, 0.0)).length()
-	var hill_blend := smoothstep(3.0, 26.0, outside)
-	var hills := (_hills.get_noise_2d(x, z) * 0.5 + 0.5) * 11.0 + 1.5
 	var r := Vector2(x, z).length()
+	var hill_blend := smoothstep(clearing_radius, clearing_radius + 22.0, r)
+	var hills := (_hills.get_noise_2d(x, z) * 0.5 + 0.5) * hill_height + 0.5
 	var ridge := 1.0 - absf(_ridges.get_noise_2d(x, z))
-	var mountains := smoothstep(75.0, 140.0, r) * (ridge * ridge * 45.0 + 8.0)
+	var mountains := smoothstep(play_radius - 15.0, play_radius + 50.0, r) * (ridge * ridge * 45.0 + 8.0)
 	return hills * hill_blend + mountains
+
+
+## True when nothing solid (a trunk or boulder) stands within margin of this spot.
+func is_open_ground(x: float, z: float, margin := 1.0) -> bool:
+	for o in _obstacles:
+		if Vector2(o.x - x, o.y - z).length() < o.z + margin:
+			return false
+	return true
 
 
 func _build() -> void:
@@ -87,7 +106,7 @@ func _build() -> void:
 	_rng.seed = world_seed
 	_hills.seed = world_seed
 	_hills.frequency = 0.018
-	_hills.fractal_octaves = 4
+	_hills.fractal_octaves = 3
 	_ridges.seed = world_seed + 1
 	_ridges.frequency = 0.011
 	_ridges.fractal_octaves = 3
@@ -103,11 +122,14 @@ func _build() -> void:
 	_rock_material.set_shader_parameter("glow_strength", 1.8)
 	_rock_material.set_shader_parameter("rim_strength", 0.5)
 
+	_obstacles.clear()
 	_build_ground()
+	_build_edge_wall()
 	_build_grass()
 	_build_rocks_and_crystals()
 	_build_trees()
 	_build_shrubs()
+	_build_ferns()
 	_build_spores()
 
 
@@ -151,6 +173,47 @@ func _build_ground() -> void:
 			ground.name = "Ground_%d_%d" % [tx, tz]
 			ground.mesh = mesh
 			_generated.add_child(ground)
+			# Tiles the player can reach get collision built from the very same triangles.
+			var center := Vector2(start + (tx + 0.5) * tile, start + (tz + 0.5) * tile)
+			if center.length() - tile * 0.71 < play_radius + 4.0:
+				var body := StaticBody3D.new()
+				var shape := CollisionShape3D.new()
+				shape.shape = mesh.create_trimesh_shape()
+				body.add_child(shape)
+				ground.add_child(body)
+
+
+## An invisible ring of walls in the foothills, so nobody walks off into the mountains.
+func _build_edge_wall() -> void:
+	var segments := 64
+	var radius := play_radius + 2.0
+	var box := BoxShape3D.new()
+	box.size = Vector3(radius * TAU / segments * 1.15, 120.0, 2.0)
+	var wall := StaticBody3D.new()
+	wall.name = "EdgeWall"
+	for i in segments:
+		var a := i * TAU / segments
+		var shape := CollisionShape3D.new()
+		shape.shape = box
+		shape.transform = Transform3D(Basis(Vector3.UP, -a - PI * 0.5), Vector3(cos(a), 0.0, sin(a)) * (radius + 1.0) + Vector3.UP * 40.0)
+		wall.add_child(shape)
+	_generated.add_child(wall)
+
+
+## A static cylinder for a trunk or boulder, recorded so enemies don't spawn inside it.
+func _add_obstacle(pos: Vector3, radius: float, height: float) -> void:
+	if Vector2(pos.x, pos.z).length() > play_radius + radius + 3.0:
+		return
+	var body := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var cylinder := CylinderShape3D.new()
+	cylinder.radius = radius
+	cylinder.height = height
+	shape.shape = cylinder
+	body.add_child(shape)
+	body.position = pos + Vector3.UP * height * 0.5
+	_generated.add_child(body)
+	_obstacles.append(Vector3(pos.x, pos.z, radius))
 
 
 func _normal_at(x: float, z: float) -> Vector3:
@@ -188,8 +251,7 @@ func _build_grass() -> void:
 			continue  # bare patches break up the carpet
 		if _normal_at(x, z).y < 0.8:
 			continue
-		var in_arena := absf(x) < arena_half_size and absf(z) < arena_half_size
-		var tall := _rng.randf_range(0.2, 0.38) if in_arena else _rng.randf_range(0.4, 0.95)
+		var tall := _rng.randf_range(0.25, 0.4) if r < clearing_radius else _rng.randf_range(0.3, 0.8)
 		var wide := _rng.randf_range(0.8, 1.3)
 		var basis := Basis(Vector3.UP, _rng.randf() * TAU).scaled(Vector3(wide, tall, wide))
 		var xform := Transform3D(basis, Vector3(x, height_at(x, z) - 0.02, z))
@@ -276,10 +338,9 @@ func _build_trees() -> void:
 	while spots.size() < tree_count and attempts < tree_count * 30:
 		attempts += 1
 		var angle := _rng.randf() * TAU
-		var r := arena_half_size * 1.45 + pow(_rng.randf(), 1.3) * 80.0
+		# Trees grow all over the map and into the foothills, but leave the clearing open.
+		var r := clearing_radius + 5.0 + pow(_rng.randf(), 0.9) * (play_radius + 25.0 - clearing_radius)
 		var p := Vector2(cos(angle), sin(angle)) * r
-		if maxf(absf(p.x), absf(p.y)) < arena_half_size + 6.0:
-			continue
 		var clear := true
 		for other in spots:
 			if other.distance_to(p) < 6.0:
@@ -298,7 +359,8 @@ func _build_trees() -> void:
 		tree.transform = Transform3D(Basis(Vector3.UP, _rng.randf() * TAU).scaled(Vector3.ONE * s), base)
 		tree.visibility_range_end = 160.0
 		_generated.add_child(tree)
-		if p.length() < 60.0:
+		_add_obstacle(base, 0.45 * s, 4.0)
+		if p.length() < play_radius:
 			_add_light(base + Vector3.UP * variant[2] * s, variant[1], 9.0 * s, light_energy)
 
 
@@ -437,26 +499,19 @@ func _build_shrubs() -> void:
 	for v in variants.size():
 		placements.append([])
 
-	# Shrubs grow in patches. Some sit in the arena; they are low and have no collision.
+	# Shrubs grow in patches across the map. They are low and have no collision.
 	var placed := 0
 	while placed < shrub_count:
-		var center: Vector2
-		var inside := _rng.randf() < 0.2
-		if inside:
-			center = Vector2(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1)) * (arena_half_size - 3.0)
-			if center.length() < 5.0:
-				continue  # keep the spawn point clear
-		else:
-			var angle := _rng.randf() * TAU
-			center = Vector2(cos(angle), sin(angle)) * _rng.randf_range(arena_half_size + 3.0, 75.0)
+		var angle := _rng.randf() * TAU
+		var center := Vector2(cos(angle), sin(angle)) * sqrt(_rng.randf()) * (play_radius + 10.0)
+		if center.length() < 5.0:
+			continue  # keep the spawn point clear
 		var patch_variant := _rng.randi() % variants.size()
-		if inside:
-			_add_light(Vector3(center.x, 0.8, center.y), glows[patch_variant], 5.0, light_energy * 0.8)
+		if _rng.randf() < 0.2:
+			_add_light(Vector3(center.x, height_at(center.x, center.y) + 0.8, center.y), glows[patch_variant], 5.0, light_energy * 0.8)
 		for k in _rng.randi_range(3, 7):
 			var p := center + Vector2(_rng.randf_range(-3, 3), _rng.randf_range(-3, 3))
-			if inside and (absf(p.x) > arena_half_size - 1.0 or absf(p.y) > arena_half_size - 1.0):
-				continue
-			var s := _rng.randf_range(0.6, 1.0) if inside else _rng.randf_range(0.8, 1.6)
+			var s := _rng.randf_range(0.6, 1.0) if p.length() < clearing_radius else _rng.randf_range(0.8, 1.5)
 			var xform := Transform3D(Basis(Vector3.UP, _rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(p.x, height_at(p.x, p.y) - 0.05, p.y))
 			placements[patch_variant if _rng.randf() < 0.7 else _rng.randi() % variants.size()].append(xform)
 			placed += 1
@@ -521,6 +576,98 @@ func _make_spike_shrub() -> ArrayMesh:
 	return mb.commit()
 
 
+# --- Ferns --------------------------------------------------------------------------------------
+
+func _build_ferns() -> void:
+	var variants: Array[ArrayMesh] = []
+	for i in 4:
+		variants.append(_make_fern())
+
+	# Ferns cluster in the hollows where the ground-patch noise runs high, scattered over the map.
+	var chunk_size := 30.0
+	var chunks := {}
+	var placed := 0
+	var attempts := 0
+	while placed < fern_count and attempts < fern_count * 20:
+		attempts += 1
+		var angle := _rng.randf() * TAU
+		var center := Vector2(cos(angle), sin(angle)) * sqrt(_rng.randf()) * (play_radius + 10.0)
+		if center.length() < 6.0 or _patches.get_noise_2d(center.x, center.y) < 0.0:
+			continue
+		var variant := _rng.randi() % variants.size()
+		for k in _rng.randi_range(2, 5):
+			var p := center + Vector2(_rng.randf_range(-2.5, 2.5), _rng.randf_range(-2.5, 2.5))
+			if _normal_at(p.x, p.y).y < 0.8:
+				continue
+			var s := _rng.randf_range(0.7, 1.3)
+			var xform := Transform3D(Basis(Vector3.UP, _rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(p.x, height_at(p.x, p.y) - 0.05, p.y))
+			var key := Vector3i(floori(p.x / chunk_size), floori(p.y / chunk_size), variant if _rng.randf() < 0.8 else _rng.randi() % variants.size())
+			if not chunks.has(key):
+				chunks[key] = []
+			chunks[key].append(xform)
+			placed += 1
+
+	for key: Vector3i in chunks:
+		var items: Array = chunks[key]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = variants[key.z]
+		mm.instance_count = items.size()
+		for i in items.size():
+			mm.set_instance_transform(i, items[i])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.name = "Ferns_%d_%d_%d" % [key.x, key.y, key.z]
+		mmi.multimesh = mm
+		mmi.material_override = _flora_material
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.visibility_range_end = 80.0
+		mmi.visibility_range_end_margin = 10.0
+		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		_generated.add_child(mmi)
+
+
+## A tuft of tall fiddlehead fronds: dark stalks with paired leaflets, each tip rolled into a
+## glowing spiral coil.
+func _make_fern() -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var stem: Color = _pick([Color(0.05, 0.1, 0.22), Color(0.2, 0.08, 0.04), Color(0.04, 0.14, 0.2)])
+	var glow: Color = _pick([Color(0.3, 0.85, 1.0), Color(1.0, 0.5, 0.12), Color(1.0, 0.72, 0.28), Color(0.15, 0.6, 1.0)])
+	var fronds := _rng.randi_range(5, 7)
+	for f in fronds:
+		var a := f * TAU / fronds + _rng.randf_range(-0.3, 0.3)
+		var out := Vector3(cos(a), 0.0, sin(a))
+		var h := _rng.randf_range(0.7, 1.4)
+		var lean := _rng.randf_range(0.2, 0.55)
+		var coil := _rng.randf_range(0.1, 0.18)
+		var path: Array[Vector3] = []
+		var radii: Array[float] = []
+		for i in 6:
+			var t := i / 5.0
+			path.append(out * lean * t * t + Vector3.UP * h * t)
+			radii.append(lerpf(0.035, 0.025, t))
+		# The coil starts heading straight up and rolls outward over itself, tightening as it goes.
+		var top := path[path.size() - 1]
+		var hub := top + out * coil
+		for i in range(1, 19):
+			var s := i / 18.0
+			var turn := s * 1.7 * TAU
+			var r := coil * (1.0 - 0.75 * s)
+			path.append(hub + (-out * cos(turn) + Vector3.UP * sin(turn)) * r)
+			radii.append(lerpf(0.025, 0.01, s))
+		mb.tube(path, radii, 5, stem, glow.darkened(0.3), glow, 0.0, 1.0)
+		mb.ellipsoid(path[path.size() - 1], Vector3.ONE * 0.03, glow, glow, 1.0, 3, 6)
+		var side := out.cross(Vector3.UP).normalized()
+		for k in 3:
+			var t := 0.3 + k * 0.2
+			var at := _sample_path(path.slice(0, 6), t)
+			var length := lerpf(0.32, 0.16, k / 2.0) * h
+			for flip: float in [-1.0, 1.0]:
+				var dir := (side * flip + out * 0.4 + Vector3.UP * 0.2).normalized()
+				mb.leaf(at, dir, length, 0.05, 0.06, stem.lightened(0.1), glow)
+	_last_glow = glow
+	return mb.commit()
+
+
 # --- Rocks and crystals -------------------------------------------------------------------------
 
 func _build_rocks_and_crystals() -> void:
@@ -533,41 +680,25 @@ func _build_rocks_and_crystals() -> void:
 		crystals.append(_make_crystal_cluster())
 		crystal_glows.append(_last_glow)
 
-	# A craggy ring of boulders hides the arena walls and frames the fight.
-	var edge := arena_half_size + 2.8
-	var d := -edge
-	while d < edge:
-		for side in 4:
-			var along := d + _rng.randf_range(-0.6, 0.6)
-			var depth := edge + _rng.randf_range(0.3, 3.0)
-			var p: Vector2
-			match side:
-				0: p = Vector2(along, -depth)
-				1: p = Vector2(along, depth)
-				2: p = Vector2(-depth, along)
-				_: p = Vector2(depth, along)
-			var s := Vector3(_rng.randf_range(2.6, 4.4), _rng.randf_range(3.0, 6.5), _rng.randf_range(2.6, 4.4))
-			_add_mesh(rocks[_rng.randi() % rocks.size()], _rock_material, Vector3(p.x, height_at(p.x, p.y) - 0.4, p.y), s, true)
-			if _rng.randf() < 0.18:
-				var c := p + Vector2(_rng.randf_range(-1.5, 1.5), _rng.randf_range(-1.5, 1.5)).limit_length(1.5)
-				var ci := _rng.randi() % crystals.size()
-				var pos := Vector3(c.x, height_at(c.x, c.y), c.y)
-				_add_mesh(crystals[ci], _flora_material, pos, Vector3.ONE * _rng.randf_range(1.0, 2.0), false)
-				_add_light(pos + Vector3.UP * 1.2, crystal_glows[ci], 7.0, light_energy)
-		d += _rng.randf_range(2.2, 3.2)
-
-	# Outcrops and crystal clusters scattered over the hills.
-	for i in 60:
+	# Outcrops and crystal clusters scattered over the hills. Boulders are solid; crystals are not.
+	for i in 70:
 		var angle := _rng.randf() * TAU
-		var r := _rng.randf_range(arena_half_size + 8.0, 110.0)
+		var r := _rng.randf_range(clearing_radius + 4.0, 115.0)
 		var p := Vector2(cos(angle), sin(angle)) * r
 		var big := _rng.randf_range(1.5, 5.0)
-		_add_mesh(rocks[_rng.randi() % rocks.size()], _rock_material, Vector3(p.x, height_at(p.x, p.y) - big * 0.2, p.y), Vector3(big, big * _rng.randf_range(0.6, 1.8), big), true)
-	for i in 35:
+		var tall := big * _rng.randf_range(0.6, 1.8)
+		var pos := Vector3(p.x, height_at(p.x, p.y) - big * 0.2, p.y)
+		_add_mesh(rocks[_rng.randi() % rocks.size()], _rock_material, pos, Vector3(big, tall, big), true)
+		_add_obstacle(pos, big * 0.42, tall)
+	for i in 50:
 		var angle := _rng.randf() * TAU
-		var r := _rng.randf_range(arena_half_size + 5.0, 80.0)
+		var r := _rng.randf_range(clearing_radius, play_radius + 10.0)
 		var p := Vector2(cos(angle), sin(angle)) * r
-		_add_mesh(crystals[_rng.randi() % crystals.size()], _flora_material, Vector3(p.x, height_at(p.x, p.y) - 0.1, p.y), Vector3.ONE * _rng.randf_range(1.2, 3.0), false)
+		var ci := _rng.randi() % crystals.size()
+		var pos := Vector3(p.x, height_at(p.x, p.y) - 0.1, p.y)
+		_add_mesh(crystals[ci], _flora_material, pos, Vector3.ONE * _rng.randf_range(1.2, 3.0), false)
+		if _rng.randf() < 0.35:
+			_add_light(pos + Vector3.UP * 1.2, crystal_glows[ci], 7.0, light_energy)
 
 
 func _add_light(pos: Vector3, color: Color, light_range: float, energy: float) -> void:
@@ -685,6 +816,7 @@ func _build_spores() -> void:
 	fade.add_point(0.8, Color(0.4, 0.8, 1.0, 1.0))
 
 	var spores := CPUParticles3D.new()
+	_spores = spores
 	spores.name = "Spores"
 	spores.mesh = quad
 	spores.amount = spore_count
