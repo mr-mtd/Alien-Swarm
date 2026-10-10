@@ -150,6 +150,16 @@ func take_damage(amount: int, knockback: Vector3 = Vector3.ZERO) -> void:
 		_die()
 
 
+## Restores health, never past max_health. Returns how much was actually restored.
+func heal(amount: int) -> int:
+	if is_dead:
+		return 0
+	var before := health
+	health = mini(health + amount, max_health)
+	health_changed.emit(health, max_health)
+	return health - before
+
+
 func _attack_sequence() -> void:
 	_attacking = true
 	var step := 0
