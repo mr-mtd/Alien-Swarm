@@ -14,7 +14,7 @@ const FLORA_SHADER := preload("res://shaders/alien_flora.gdshader")
 ## Half the width of the flat, playable square in the middle (matches the arena walls).
 @export var arena_half_size := 20.0
 @export var world_size := 300.0
-@export var grass_clumps := 14000
+@export var grass_clumps := 7000
 @export var grass_radius := 58.0
 @export var tree_count := 90
 @export var shrub_count := 260
