@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://gc3vmmimburk"
-path="res://.godot/imported/duskmane_duskmane_emissive.png-01dca6918f51a98859b9ac65ce267f11.ctex"
+path.s3tc="res://.godot/imported/duskmane_duskmane_emissive.png-01dca6918f51a98859b9ac65ce267f11.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "66eef66db47440d8b586ec7ce8a482b9"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://3dModels/duskmane_duskmane_emissive.png"
-dest_files=["res://.godot/imported/duskmane_duskmane_emissive.png-01dca6918f51a98859b9ac65ce267f11.ctex"]
+dest_files=["res://.godot/imported/duskmane_duskmane_emissive.png-01dca6918f51a98859b9ac65ce267f11.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0
