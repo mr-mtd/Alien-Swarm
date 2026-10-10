@@ -237,7 +237,13 @@ func _die() -> void:
 	_set_state(State.DEAD)
 	collision_layer = 0
 	died.emit(self)
-	_animator.play_once(&"death")
+	if _animator.has_clip(&"death"):
+		_animator.play_once(&"death")
+	else:
+		# No death animation: freeze and topple over.
+		_animator.freeze()
+		create_tween().tween_property(_model, "rotation:x", deg_to_rad(-90.0), 0.6) \
+			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	await get_tree().create_timer(_animator.clip_length(&"death") + 1.0).timeout
 	var tween := create_tween()
 	tween.tween_property(_model, "scale", Vector3.ZERO, 0.3)

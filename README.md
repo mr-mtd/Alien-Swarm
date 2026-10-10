@@ -28,11 +28,13 @@ You're stuck in an arena, and waves of aliens keep coming, with more in each wav
 project.godot       Project settings, input map, physics layer names
 scenes/main.tscn    Arena, lighting, HUD; the scene that runs on launch
 scenes/player.tscn  Player body, sword, hitbox, third-person camera
-scenes/enemy.tscn   Basic alien enemy
+scenes/enemy.tscn   Skitterer, the common alien
+scenes/duskmane.tscn  Duskmane, a tough club-wielding alien that rushes in and backs off
 scenes/alien_terrain.tscn  The alien world around the arena (built by scripts/alien_terrain.gd)
 scripts/main.gd     Wave spawning, game over and restart
 scripts/player.gd   Movement, dodge, combo attacks, health
 scripts/enemy.gd    Chase, telegraphed attack, stagger, death
+scripts/duskmane.gd Rush / hold-off hunting cycle, club attack, heavy poise
 scripts/hud.gd      Health bar, wave and kill counters, messages
 scripts/alien_terrain.gd  Generates ground, grass, trees, shrubs, rocks, crystals, spores and point lights
 shaders/            Sky (nebula, stars, ringed planet), ground, grass and plant shaders
