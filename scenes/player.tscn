@@ -1,7 +1,8 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
 [ext_resource type="PackedScene" path="res://3dModels/emberline_strider_game.glb" id="2_strider"]
+[ext_resource type="Script" path="res://scripts/strider_animator.gd" id="3_animator"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_body"]
 radius = 0.4
@@ -33,6 +34,10 @@ monitorable = false
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Model/Hitbox"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, -1.1)
 shape = SubResource("BoxShape3D_hitbox")
+
+[node name="Animator" type="Node" parent="." node_paths=PackedStringArray("model")]
+script = ExtResource("3_animator")
+model = NodePath("../Model/Strider")
 
 [node name="CameraPivot" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
