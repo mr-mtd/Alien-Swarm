@@ -109,15 +109,20 @@ func _build_library() -> void:
 	_player.add_animation_library(library_name, library)
 
 
-## Finds the model's clip whose simplified name matches `clip`'s.
+## Finds the model's clip whose simplified name matches `clip`'s. Failing that, takes the one clip
+## whose name ends with it ("ClubAttack" for "attack").
 func _find_clip(clip: StringName) -> StringName:
 	var wanted := _simplify(clip)
+	var endings: Array[StringName] = []
 	for anim_name in _player.get_animation_list():
 		if String(anim_name).begins_with(library_name + "/"):
 			continue
-		if _simplify(anim_name) == wanted:
+		var short := _simplify(anim_name)
+		if short == wanted:
 			return anim_name
-	return &""
+		if short.ends_with(wanted):
+			endings.append(anim_name)
+	return endings[0] if endings.size() == 1 else &""
 
 
 static func _simplify(anim_name: String) -> String:

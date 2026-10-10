@@ -3,9 +3,13 @@ extends Node3D
 ## game over / restart.
 
 const ENEMY_SCENE := preload("res://scenes/enemy.tscn")
+const DUSKMANE_SCENE := preload("res://scenes/duskmane.tscn")
 
 @export var first_wave_size := 3
 @export var wave_growth := 2
+## Duskmanes join the waves from this wave on, roughly one for every `duskmane_ratio` aliens.
+@export var duskmane_first_wave := 2
+@export var duskmane_ratio := 5
 ## Aliens appear somewhere between these two distances from the player.
 @export var spawn_min_distance := 18.0
 @export var spawn_max_distance := 40.0
@@ -38,8 +42,10 @@ func _next_wave() -> void:
 	wave += 1
 	_hud.set_wave(wave)
 	var count := first_wave_size + wave_growth * (wave - 1)
+	var duskmanes := maxi(floori(count / float(duskmane_ratio)), 1) if wave >= duskmane_first_wave else 0
 	for i in count:
-		var enemy: Enemy = ENEMY_SCENE.instantiate()
+		var scene := DUSKMANE_SCENE if i < duskmanes else ENEMY_SCENE
+		var enemy: Enemy = scene.instantiate()
 		# Position before adding so the body never appears at the origin on top of the player.
 		enemy.position = _spawn_point()
 		# Waves always hunt the player down, however far away they spawned.
