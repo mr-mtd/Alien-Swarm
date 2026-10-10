@@ -39,6 +39,7 @@ model = NodePath("../Model/Duskmane")
 library_name = &"duskmane"
 clips = {
 &"attack": false,
+&"death": false,
 &"idle": true,
 &"run": true,
 &"walk": true
