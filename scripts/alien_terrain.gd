@@ -2,8 +2,8 @@
 class_name AlienTerrain
 extends Node3D
 ## Builds the open alien world from code: rolling ground of cracked, glowing basalt cut by rivers and
-## pools of lava, swaying grass,
-## fiddlehead ferns, alien trees, shrubs, rocks, crystals, drifting spores and coloured point lights.
+## pools of lava, swaying grass, fiddlehead ferns, alien trees, shrubs, rocks, crystals, drifting
+## spores and coloured point lights.
 ## The ground, tree trunks and boulders have collision; plants are decoration you walk through.
 ## The playable area is a circle of play_radius around the origin, ringed by rising mountains and
 ## an invisible wall. Change world_seed for a different layout.
