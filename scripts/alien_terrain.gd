@@ -1,8 +1,9 @@
 @tool
 class_name AlienTerrain
 extends Node3D
-## Builds the open alien world from code: rolling walkable ground with glowing veins, swaying grass,
-## fiddlehead ferns, alien trees, shrubs, rocks, crystals, drifting spores and coloured point lights.
+## Builds the open alien world from code: rolling ground of cracked, glowing basalt cut by rivers and
+## pools of lava, swaying grass, fiddlehead ferns, alien trees, shrubs, rocks, crystals, drifting
+## spores and coloured point lights.
 ## The ground, tree trunks and boulders have collision; plants are decoration you walk through.
 ## The playable area is a circle of play_radius around the origin, ringed by rising mountains and
 ## an invisible wall. Change world_seed for a different layout.
@@ -25,6 +26,10 @@ const FLORA_SHADER := preload("res://shaders/alien_flora.gdshader")
 @export var tree_count := 90
 @export var shrub_count := 260
 @export var spore_count := 500
+## How much of the map outside the clearing is covered by lava rivers and pools (0 turns it off).
+@export_range(0.0, 1.0) var lava_amount := 0.5
+## How far lava sits below the rock around it.
+@export var lava_depth := 0.7
 ## Point lights cast from glowing trees, crystals and shrubs across the map.
 @export var point_lights := true
 @export var light_energy := 2.2
@@ -37,6 +42,8 @@ var _rng := RandomNumberGenerator.new()
 var _hills := FastNoiseLite.new()
 var _ridges := FastNoiseLite.new()
 var _patches := FastNoiseLite.new()
+var _lava_rivers := FastNoiseLite.new()
+var _lava_pools := FastNoiseLite.new()
 var _generated: Node3D
 var _grass_material: ShaderMaterial
 var _player: Node3D
@@ -85,11 +92,30 @@ func height_at(x: float, z: float) -> float:
 	var hills := (_hills.get_noise_2d(x, z) * 0.5 + 0.5) * hill_height + 0.5
 	var ridge := 1.0 - absf(_ridges.get_noise_2d(x, z))
 	var mountains := smoothstep(play_radius - 15.0, play_radius + 50.0, r) * (ridge * ridge * 45.0 + 8.0)
-	return hills * hill_blend + mountains
+	return hills * hill_blend + mountains - lava_at(x, z) * lava_depth
 
 
-## True when nothing solid (a trunk or boulder) stands within margin of this spot.
+## How much lava covers a world position, from 0 (solid rock) to 1. Lava winds across the map in
+## rivers and gathers in pools in the low ground, but never reaches the starting clearing.
+func lava_at(x: float, z: float) -> float:
+	if lava_amount <= 0.0:
+		return 0.0
+	var r := Vector2(x, z).length()
+	var zone := smoothstep(clearing_radius + 6.0, clearing_radius + 16.0, r) * (1.0 - smoothstep(play_radius - 5.0, play_radius + 8.0, r))
+	if zone <= 0.0:
+		return 0.0
+	var width := 0.008 + 0.016 * lava_amount
+	var river := 1.0 - smoothstep(width * 0.3, width * 1.4, absf(_lava_rivers.get_noise_2d(x, z)))
+	var low := 1.0 - smoothstep(0.35, 0.5, _hills.get_noise_2d(x, z) * 0.5 + 0.5)
+	var pool_level := 0.72 - 0.12 * lava_amount
+	var pool := smoothstep(pool_level - 0.04, pool_level + 0.1, _lava_pools.get_noise_2d(x, z) * 0.5 + 0.5) * low
+	return maxf(river, pool) * zone
+
+
+## True when nothing solid (a trunk or boulder) stands within margin of this spot and it isn't lava.
 func is_open_ground(x: float, z: float, margin := 1.0) -> bool:
+	if lava_at(x, z) > 0.05:
+		return false
 	for o in _obstacles:
 		if Vector2(o.x - x, o.y - z).length() < o.z + margin:
 			return false
@@ -112,6 +138,12 @@ func _build() -> void:
 	_ridges.fractal_octaves = 3
 	_patches.seed = world_seed + 2
 	_patches.frequency = 0.035
+	_lava_rivers.seed = world_seed + 3
+	_lava_rivers.frequency = 0.011
+	_lava_rivers.fractal_octaves = 2
+	_lava_pools.seed = world_seed + 4
+	_lava_pools.frequency = 0.03
+	_lava_pools.fractal_octaves = 2
 
 	_flora_material = ShaderMaterial.new()
 	_flora_material.shader = FLORA_SHADER
@@ -124,6 +156,7 @@ func _build() -> void:
 
 	_obstacles.clear()
 	_build_ground()
+	_build_lava_lights()
 	_build_edge_wall()
 	_build_grass()
 	_build_rocks_and_crystals()
@@ -149,6 +182,7 @@ func _build_ground() -> void:
 		for tx in tiles:
 			var verts := PackedVector3Array()
 			var normals := PackedVector3Array()
+			var colors := PackedColorArray()
 			var indices := PackedInt32Array()
 			var count := per_tile + 1
 			for iz in count:
@@ -157,6 +191,7 @@ func _build_ground() -> void:
 					var z := start + tz * tile + iz * step
 					verts.append(Vector3(x, height_at(x, z), z))
 					normals.append(_normal_at(x, z))
+					colors.append(Color(lava_at(x, z), 0.0, 0.0))
 			for iz in per_tile:
 				for ix in per_tile:
 					var i := iz * count + ix
@@ -165,6 +200,7 @@ func _build_ground() -> void:
 			arrays.resize(Mesh.ARRAY_MAX)
 			arrays[Mesh.ARRAY_VERTEX] = verts
 			arrays[Mesh.ARRAY_NORMAL] = normals
+			arrays[Mesh.ARRAY_COLOR] = colors
 			arrays[Mesh.ARRAY_INDEX] = indices
 			var mesh := ArrayMesh.new()
 			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
@@ -181,6 +217,27 @@ func _build_ground() -> void:
 				shape.shape = mesh.create_trimesh_shape()
 				body.add_child(shape)
 				ground.add_child(body)
+
+
+## Warm lights over the lava so it glows onto the rocks, plants and fighters around it.
+func _build_lava_lights() -> void:
+	var placed: Array[Vector2] = []
+	var step := 6.0
+	var steps := ceili((play_radius + 10.0) / step)
+	for iz in range(-steps, steps + 1):
+		for ix in range(-steps, steps + 1):
+			var p := Vector2(ix, iz) * step + Vector2(_rng.randf_range(-2, 2), _rng.randf_range(-2, 2))
+			if p.length() > play_radius + 10.0 or lava_at(p.x, p.y) < 0.7:
+				continue
+			var clear := true
+			for other in placed:
+				if other.distance_to(p) < 18.0:
+					clear = false
+					break
+			if not clear:
+				continue
+			placed.append(p)
+			_add_light(Vector3(p.x, height_at(p.x, p.y) + 1.5, p.y), Color(1.0, 0.4, 0.1), 8.0, light_energy * 0.6)
 
 
 ## An invisible ring of walls in the foothills, so nobody walks off into the mountains.
@@ -249,6 +306,8 @@ func _build_grass() -> void:
 		var patch := _patches.get_noise_2d(x, z)
 		if patch < -0.45:
 			continue  # bare patches break up the carpet
+		if lava_at(x, z) > 0.02:
+			continue
 		if _normal_at(x, z).y < 0.8:
 			continue
 		var tall := _rng.randf_range(0.25, 0.4) if r < clearing_radius else _rng.randf_range(0.3, 0.8)
@@ -341,6 +400,8 @@ func _build_trees() -> void:
 		# Trees grow all over the map and into the foothills, but leave the clearing open.
 		var r := clearing_radius + 5.0 + pow(_rng.randf(), 0.9) * (play_radius + 25.0 - clearing_radius)
 		var p := Vector2(cos(angle), sin(angle)) * r
+		if lava_at(p.x, p.y) > 0.0:
+			continue
 		var clear := true
 		for other in spots:
 			if other.distance_to(p) < 6.0:
@@ -504,17 +565,19 @@ func _build_shrubs() -> void:
 	while placed < shrub_count:
 		var angle := _rng.randf() * TAU
 		var center := Vector2(cos(angle), sin(angle)) * sqrt(_rng.randf()) * (play_radius + 10.0)
-		if center.length() < 5.0:
-			continue  # keep the spawn point clear
+		if center.length() < 5.0 or lava_at(center.x, center.y) > 0.0:
+			continue  # keep the spawn point and the lava clear
 		var patch_variant := _rng.randi() % variants.size()
 		if _rng.randf() < 0.2:
 			_add_light(Vector3(center.x, height_at(center.x, center.y) + 0.8, center.y), glows[patch_variant], 5.0, light_energy * 0.8)
 		for k in _rng.randi_range(3, 7):
 			var p := center + Vector2(_rng.randf_range(-3, 3), _rng.randf_range(-3, 3))
+			placed += 1
+			if lava_at(p.x, p.y) > 0.02:
+				continue
 			var s := _rng.randf_range(0.6, 1.0) if p.length() < clearing_radius else _rng.randf_range(0.8, 1.5)
 			var xform := Transform3D(Basis(Vector3.UP, _rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(p.x, height_at(p.x, p.y) - 0.05, p.y))
 			placements[patch_variant if _rng.randf() < 0.7 else _rng.randi() % variants.size()].append(xform)
-			placed += 1
 
 	for v in variants.size():
 		var mm := MultiMesh.new()
@@ -597,7 +660,7 @@ func _build_ferns() -> void:
 		var variant := _rng.randi() % variants.size()
 		for k in _rng.randi_range(2, 5):
 			var p := center + Vector2(_rng.randf_range(-2.5, 2.5), _rng.randf_range(-2.5, 2.5))
-			if _normal_at(p.x, p.y).y < 0.8:
+			if _normal_at(p.x, p.y).y < 0.8 or lava_at(p.x, p.y) > 0.02:
 				continue
 			var s := _rng.randf_range(0.7, 1.3)
 			var xform := Transform3D(Basis(Vector3.UP, _rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(p.x, height_at(p.x, p.y) - 0.05, p.y))
@@ -694,6 +757,8 @@ func _build_rocks_and_crystals() -> void:
 		var angle := _rng.randf() * TAU
 		var r := _rng.randf_range(clearing_radius, play_radius + 10.0)
 		var p := Vector2(cos(angle), sin(angle)) * r
+		if lava_at(p.x, p.y) > 0.02:
+			continue
 		var ci := _rng.randi() % crystals.size()
 		var pos := Vector3(p.x, height_at(p.x, p.y) - 0.1, p.y)
 		_add_mesh(crystals[ci], _flora_material, pos, Vector3.ONE * _rng.randf_range(1.2, 3.0), false)
