@@ -1,10 +1,11 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="3_hud"]
 [ext_resource type="Shader" path="res://shaders/alien_sky.gdshader" id="4_sky"]
 [ext_resource type="PackedScene" path="res://scenes/alien_terrain.tscn" id="5_terrain"]
+[ext_resource type="AudioStream" path="res://audio/alien_swarm_theme.ogg" id="6_music"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_sky"]
 shader = ExtResource("4_sky")
@@ -52,6 +53,12 @@ directional_shadow_max_distance = 60.0
 [node name="Player" parent="." instance=ExtResource("2_player")]
 
 [node name="Enemies" type="Node3D" parent="."]
+
+[node name="Music" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("6_music")
+volume_db = -8.0
+autoplay = true
+bus = &"Music"
 
 [node name="HUD" type="CanvasLayer" parent="."]
 script = ExtResource("3_hud")

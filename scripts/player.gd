@@ -36,6 +36,18 @@ signal died
 ## Walk animation playback speed when moving at full move_speed.
 @export var walk_anim_speed := 1.3
 
+@export_group("Audio")
+@export var attack_sound: AudioStream = preload("res://audio/player_attack.wav")
+@export var attack_volume_db := -3.0
+## How long before the claws connect the swing sound starts, so its whoosh peaks on the hit.
+@export var attack_sound_lead := 0.12
+## Played at the enemy whenever a swing connects.
+@export var enemy_hit_sound: AudioStream = preload("res://audio/enemy_hit.wav")
+@export var enemy_hit_volume_db := 0.0
+## Played whenever the player takes damage, from enemies and from lava.
+@export var hurt_sound: AudioStream = preload("res://audio/player_hit.wav")
+@export var hurt_volume_db := -2.0
+
 @export_group("Camera")
 @export var mouse_sensitivity := 0.003
 @export var min_pitch := deg_to_rad(-60.0)
@@ -145,6 +157,7 @@ func take_damage(amount: int, knockback: Vector3 = Vector3.ZERO) -> void:
 	health_changed.emit(health, max_health)
 	velocity += knockback + Vector3.UP * 2.0
 	_invulnerable_time_left = hurt_invulnerability
+	Sfx.play(self, hurt_sound, hurt_volume_db)
 	_flash()
 	if health == 0:
 		_die()
@@ -179,7 +192,13 @@ func _swing(step: int) -> void:
 	# The finisher plays a little slower so it reads as a heavier blow.
 	var speed := attack_anim_speed * (0.85 if step == 3 else 1.0)
 	_animator.play_attack(speed)
-	await get_tree().create_timer(attack_hit_time / speed, false, true).timeout
+	var hit_delay := attack_hit_time / speed
+	var sound_lead := minf(attack_sound_lead, hit_delay)
+	await get_tree().create_timer(hit_delay - sound_lead, false, true).timeout
+	if is_dead:
+		return
+	Sfx.play(self, attack_sound, attack_volume_db, 0.85 if step == 3 else 1.0)
+	await get_tree().create_timer(sound_lead, false, true).timeout
 	if is_dead:
 		return
 	_apply_hit(step)
@@ -192,6 +211,8 @@ func _apply_hit(step: int) -> void:
 	for body in _hitbox.get_overlapping_bodies():
 		if body.is_in_group("enemies") and body.has_method("take_damage"):
 			body.take_damage(damage, knockback)
+			var pitch := (body as Enemy).sound_pitch if body is Enemy else 1.0
+			Sfx.play_at(self, enemy_hit_sound, body.global_position + Vector3.UP, enemy_hit_volume_db, pitch)
 
 
 func _die() -> void:
