@@ -30,6 +30,12 @@ const FLORA_SHADER := preload("res://shaders/alien_flora.gdshader")
 @export_range(0.0, 1.0) var lava_amount := 0.5
 ## How far lava sits below the rock around it.
 @export var lava_depth := 0.7
+## Health the player loses each tick while standing in lava (0 makes lava harmless).
+@export var lava_damage := 10
+## Seconds between lava damage ticks.
+@export var lava_damage_interval := 0.5
+## How deep into the lava (0 at the shore, 1 in the middle of a flow) the player must stand to burn.
+@export_range(0.0, 1.0) var lava_burn_threshold := 0.5
 ## Point lights cast from glowing trees, crystals and shrubs across the map.
 @export var point_lights := true
 @export var light_energy := 2.2
@@ -47,6 +53,7 @@ var _lava_pools := FastNoiseLite.new()
 var _generated: Node3D
 var _grass_material: ShaderMaterial
 var _player: Node3D
+var _lava_burn_time := 0.0
 var _spores: CPUParticles3D
 # Trunks and boulders the player collides with, as (x, z, radius), so spawns can avoid them.
 var _obstacles: Array[Vector3] = []
@@ -62,7 +69,7 @@ func _ready() -> void:
 	_build()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if Engine.is_editor_hint() or _grass_material == null:
 		return
 	if not is_instance_valid(_player):
@@ -71,6 +78,22 @@ func _process(_delta: float) -> void:
 		_grass_material.set_shader_parameter("player_position", _player.global_position)
 		# Spores drift around wherever the player is; particles already emitted stay put.
 		_spores.global_position = _player.global_position + Vector3.UP * 2.5
+		_burn_player_in_lava(delta)
+
+
+## Hurts the player on a steady tick while they stand in lava. The first tick lands as soon as
+## they step in, so a quick dash across costs a little health and lingering costs a lot.
+func _burn_player_in_lava(delta: float) -> void:
+	var p := _player.global_position
+	# Only count feet near the lava surface, so jumping over a river doesn't burn.
+	var in_lava := lava_at(p.x, p.z) > lava_burn_threshold and p.y < height_at(p.x, p.z) + 0.6
+	if lava_damage <= 0 or not in_lava or not _player.has_method("take_damage"):
+		_lava_burn_time = 0.0
+		return
+	_lava_burn_time -= delta
+	if _lava_burn_time <= 0.0:
+		_lava_burn_time = lava_damage_interval
+		_player.take_damage(lava_damage)
 
 
 func _set_world_seed(value: int) -> void:
