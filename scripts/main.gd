@@ -7,8 +7,9 @@ const DUSKMANE_SCENE := preload("res://scenes/duskmane.tscn")
 
 @export var first_wave_size := 3
 @export var wave_growth := 2
-## Duskmanes join the waves from this wave on, roughly one for every `duskmane_ratio` aliens.
-@export var duskmane_first_wave := 2
+## Duskmanes join the waves from this wave on, roughly one for every `duskmane_ratio` aliens
+## (always at least one).
+@export var duskmane_first_wave := 1
 @export var duskmane_ratio := 5
 ## Aliens appear somewhere between these two distances from the player.
 @export var spawn_min_distance := 18.0
