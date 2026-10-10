@@ -45,6 +45,13 @@ enum State { IDLE, CHASE, ATTACK, JUMP_ATTACK, STAGGER, DEAD }
 ## Chance, from 0 to 1, that it drops a health pack when it dies.
 @export_range(0.0, 1.0) var health_pack_drop_chance := 0.25
 
+@export_group("Audio")
+## Screech played as it starts a slash or a leap.
+@export var attack_sound: AudioStream = preload("res://audio/enemy_attack.wav")
+@export var attack_volume_db := -4.0
+## Pitch of this alien's sounds, including the hit sound when the player strikes it. Lower is bigger.
+@export var sound_pitch := 1.0
+
 var health := 0
 
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
@@ -157,6 +164,7 @@ func _start_attack() -> void:
 	_set_state(State.ATTACK)
 	_hit_done = false
 	_animator.play_once(&"attack", attack_anim_speed)
+	_play_attack_sound()
 
 
 func _start_jump() -> void:
@@ -166,6 +174,7 @@ func _start_jump() -> void:
 	velocity.x = 0.0
 	velocity.z = 0.0
 	_animator.play_once(&"jump_attack")
+	_play_attack_sound()
 
 
 func _update_jump(delta: float) -> void:
@@ -206,6 +215,10 @@ func _hit_target(reach: float, damage: int, knockback: float) -> void:
 	var offset := _flat_offset_to_target()
 	if offset.length() <= reach:
 		_target.take_damage(damage, offset.normalized() * knockback)
+
+
+func _play_attack_sound() -> void:
+	Sfx.play_at(self, attack_sound, global_position + Vector3.UP, attack_volume_db, sound_pitch)
 
 
 func _face_target(delta: float) -> void:
