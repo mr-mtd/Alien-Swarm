@@ -4,6 +4,7 @@ extends Node3D
 
 const ENEMY_SCENE := preload("res://scenes/enemy.tscn")
 const DUSKMANE_SCENE := preload("res://scenes/duskmane.tscn")
+const HEALTH_PACK_SCENE := preload("res://scenes/health_pack.tscn")
 
 @export var first_wave_size := 3
 @export var wave_growth := 2
@@ -14,6 +15,8 @@ const DUSKMANE_SCENE := preload("res://scenes/duskmane.tscn")
 @export var spawn_min_distance := 18.0
 @export var spawn_max_distance := 40.0
 @export var time_between_waves := 2.0
+## Most health packs lying around at once; the oldest goes when another drops.
+@export var max_health_packs := 6
 
 var wave := 0
 var kills := 0
@@ -69,7 +72,9 @@ func _spawn_point() -> Vector3:
 	return Vector3(p.x, _terrain.height_at(p.x, p.y) + 1.0, p.y)
 
 
-func _on_enemy_died(_enemy: Enemy) -> void:
+func _on_enemy_died(enemy: Enemy) -> void:
+	if randf() < enemy.health_pack_drop_chance:
+		_drop_health_pack(enemy.global_position)
 	kills += 1
 	_alive -= 1
 	_hud.set_kills(kills)
@@ -79,6 +84,35 @@ func _on_enemy_died(_enemy: Enemy) -> void:
 	await get_tree().create_timer(time_between_waves).timeout
 	if not _player.is_dead:
 		_next_wave()
+
+
+## Drops a health pack on the ground where an alien died. If it died in lava the pack lands on
+## the nearest bit of solid rock instead, and if there is none close by nothing drops.
+func _drop_health_pack(at: Vector3) -> void:
+	var spot: Variant = _solid_ground_near(Vector2(at.x, at.z))
+	if spot == null:
+		return
+	var packs := get_tree().get_nodes_in_group("health_packs")
+	if packs.size() >= max_health_packs:
+		packs[0].remove_from_group("health_packs")
+		packs[0].queue_free()
+	var pack: HealthPack = HEALTH_PACK_SCENE.instantiate()
+	pack.position = Vector3(spot.x, _terrain.height_at(spot.x, spot.y) + 0.7, spot.y)
+	add_child(pack)
+
+
+## The closest spot to p, within a few metres, that isn't lava. Null if there is none.
+func _solid_ground_near(p: Vector2) -> Variant:
+	if _terrain.lava_at(p.x, p.y) < 0.05:
+		return p
+	for ring in range(1, 9):
+		var radius := ring * 0.75
+		for i in 12:
+			var angle := TAU * i / 12.0
+			var q := p + Vector2(cos(angle), sin(angle)) * radius
+			if _terrain.lava_at(q.x, q.y) < 0.05:
+				return q
+	return null
 
 
 func _on_player_died() -> void:

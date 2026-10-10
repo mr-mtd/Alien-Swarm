@@ -41,6 +41,10 @@ enum State { IDLE, CHASE, ATTACK, JUMP_ATTACK, STAGGER, DEAD }
 ## Walk animation playback speed at full move_speed.
 @export var walk_anim_speed := 1.4
 
+@export_group("Loot")
+## Chance, from 0 to 1, that it drops a health pack when it dies.
+@export_range(0.0, 1.0) var health_pack_drop_chance := 0.25
+
 var health := 0
 
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
