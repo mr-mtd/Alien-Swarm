@@ -118,6 +118,27 @@ def player_attack(rng):
     return fade_edges(normalize(whoosh * 1.3 + air + weight, -1.0))
 
 
+def player_flame(rng):
+    """Flame breath: a roaring rush of filtered noise that swells in, with crackles, then dies down.
+    About as long as the longest breath; the game fades it out early when the breath is cut short."""
+    n = int(1.7 * SR)
+    t = seconds(n)
+    noise = rng.uniform(-1.0, 1.0, n)
+    # Slow random wobble in the roar's brightness, so it sounds like a living fire.
+    wobble = np.interp(t, np.linspace(0, 1.7, 18), rng.uniform(0.7, 1.3, 18))
+    roar, _, _ = svf(noise, sweep(n, [(0, 400), (0.12, 1800), (1.2, 1300), (1.7, 500)]) * wobble, q=0.8)
+    _, hiss, _ = svf(noise, 3500.0, q=0.9)
+    rumble, _, _ = svf(noise, 160.0, q=0.7)
+    crackle = np.zeros(n)
+    for start in rng.uniform(0.05, 1.5, 60):
+        i = int(start * SR)
+        m = min(int(0.006 * SR), n - i)
+        crackle[i:i + m] += rng.uniform(-1.0, 1.0, m) * np.exp(-np.arange(m) / (0.0015 * SR)) * rng.uniform(0.3, 1.0)
+    shape = np.interp(t, [0, 0.08, 0.25, 1.3, 1.7], [0, 0.8, 1.0, 0.8, 0])
+    mix = (roar * 1.4 + hiss * 0.35 + rumble * 2.5) * shape + crackle * 0.5 * shape
+    return fade_edges(normalize(np.tanh(mix * 2.0), -1.0), 0.005, 0.1)
+
+
 def enemy_hit(rng):
     """Claws biting into an alien: a crunch on top of a fleshy thud, then a wet squelch."""
     n = int(0.45 * SR)
@@ -419,6 +440,10 @@ def main():
     ]:
         write_wav(os.path.join(OUT, name + ".wav"), make(rng))
         print("wrote", name + ".wav")
+
+    # Its own generator, so adding it left every other sound and the music exactly as they were.
+    write_wav(os.path.join(OUT, "player_flame.wav"), player_flame(np.random.default_rng(SEED + 1)))
+    print("wrote player_flame.wav")
 
     with tempfile.TemporaryDirectory() as tmp:
         wav_path = os.path.join(tmp, "music.wav")
