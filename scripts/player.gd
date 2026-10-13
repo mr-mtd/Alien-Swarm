@@ -1,7 +1,7 @@
 class_name Player
 extends CharacterBody3D
 ## Third-person player: camera-relative movement, jump, dodge roll and a three-hit claw combo.
-## Drives the Emberline Strider model's Idle, Walk and Attack animations.
+## Drives the Emberline Strider model's Idle, Walk, Attack and roll animations.
 
 signal health_changed(current: int, maximum: int)
 signal died
@@ -13,8 +13,11 @@ signal died
 @export var turn_speed := 12.0
 
 @export_group("Dodge")
-@export var dodge_speed := 14.0
-@export var dodge_duration := 0.25
+## The Strider tumbles through a full roll in this time, and can't be hurt until it lands.
+@export var dodge_duration := 0.45
+## Roll distance is dodge_speed * dodge_duration (3.6 m by default).
+@export var dodge_speed := 8.0
+## Counted from the start of a roll.
 @export var dodge_cooldown := 0.6
 
 @export_group("Combat")
@@ -127,16 +130,19 @@ func _physics_process(delta: float) -> void:
 		and is_on_floor()
 		and not _attacking
 	):
-		_dodge_direction = _move_direction if _move_direction != Vector3.ZERO else _forward()
+		# Roll where the player is steering; with no input, back away from whatever is in front.
+		_dodge_direction = _move_direction if _move_direction != Vector3.ZERO else -_forward()
 		_dodge_time_left = dodge_duration
 		_dodge_cooldown_left = dodge_cooldown
 		_invulnerable_time_left = maxf(_invulnerable_time_left, dodge_duration)
+		_animator.play_roll(_roll_direction_for(_dodge_direction), dodge_duration)
 
 	if _dodge_time_left > 0.0:
 		_dodge_time_left -= delta
 		velocity.x = _dodge_direction.x * dodge_speed
 		velocity.z = _dodge_direction.z * dodge_speed
-		_face(_dodge_direction, delta)
+		# The model keeps its facing for the whole roll: back and side rolls only read that way
+		# if the Strider doesn't turn into them.
 	else:
 		var speed := move_speed * (0.3 if _attacking else 1.0)
 		velocity.x = move_toward(velocity.x, _move_direction.x * speed, acceleration * delta)
@@ -232,7 +238,7 @@ func _flash() -> void:
 
 
 func _update_locomotion_anim() -> void:
-	if is_dead or _attacking:
+	if is_dead or _attacking or _dodge_time_left > 0.0:
 		return
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
 	if horizontal_speed > 0.5:
@@ -248,6 +254,15 @@ func _face(direction: Vector3, delta: float) -> void:
 
 func _forward() -> Vector3:
 	return -_model.global_basis.z
+
+
+## Which roll animation fits a dodge in world `direction`, given the way the model faces right now.
+func _roll_direction_for(direction: Vector3) -> StringName:
+	# The model's front is -Z and its right is +X.
+	var local := _model.global_basis.inverse() * direction
+	if absf(local.z) >= absf(local.x):
+		return &"forward" if local.z < 0.0 else &"back"
+	return &"right" if local.x > 0.0 else &"left"
 
 
 static func _yaw_for(direction: Vector3) -> float:
