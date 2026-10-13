@@ -17,7 +17,7 @@ You're stuck in an arena, and waves of aliens keep coming, with more in each wav
 | Move | W A S D |
 | Look | Mouse |
 | Attack (press again mid-swing to combo, up to 3 hits) | Left mouse button |
-| Dodge roll (brief invulnerability) | Shift |
+| Dodge roll: forward, back or sideways relative to where the Strider faces; backward with no direction held. Invulnerable while rolling | Shift |
 | Jump | Space |
 | Release / recapture mouse | Esc / click |
 | Restart after death | R |
@@ -32,7 +32,8 @@ scenes/enemy.tscn   Skitterer, the common alien
 scenes/duskmane.tscn  Duskmane, a tough club-wielding alien that rushes in and backs off
 scenes/alien_terrain.tscn  The alien world around the arena (built by scripts/alien_terrain.gd)
 scripts/main.gd     Wave spawning, game over and restart
-scripts/player.gd   Movement, dodge, combo attacks, health
+scripts/player.gd   Movement, directional dodge rolls, combo attacks, health
+scripts/strider_animator.gd  Plays the Emberline Strider's idle, walk, attack and roll clips
 scripts/enemy.gd    Chase, telegraphed attack, stagger, death
 scripts/duskmane.gd Rush / hold-off hunting cycle, club attack, heavy poise
 scripts/hud.gd      Health bar, wave and kill counters, messages
